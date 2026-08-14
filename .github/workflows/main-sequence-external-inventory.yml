@@ -122,7 +122,7 @@ jobs:
         run: python -m pip install 'honest-backtest[parquet]==0.2.0' huggingface_hub requests scipy pandas pyarrow numpy
       - name: Diagnose one causal March day before mapping or fees
         run: |
-          PYTHONPATH=. python pm_structural/obadiaha_diag.py \
+          PYTHONPATH=. python pm_structural/timefix_runner.py diag \
             --out march_diag \
             --cache march_diag_cache \
             --day 2026-03-14 \
@@ -153,7 +153,7 @@ jobs:
           python -m pip install 'honest-backtest[parquet]==0.2.0' huggingface_hub requests scipy pandas pyarrow numpy
       - name: Run pinned March structural replay
         run: |
-          PYTHONPATH=. python pm_structural/obadiaha_strict.py \
+          PYTHONPATH=. python pm_structural/timefix_runner.py strict \
             --out march_strict \
             --cache march_cache \
             --start 2026-03-02 \
