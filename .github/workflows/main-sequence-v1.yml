@@ -5,6 +5,7 @@ on:
     branches: [ main ]
     paths:
       - 'main_sequence/train_v1.py'
+      - 'main_sequence/data_manifest.json'
       - '.github/workflows/main-sequence-v1.yml'
 
 permissions:
@@ -29,11 +30,17 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install --index-url https://download.pytorch.org/whl/cpu torch
           python -m pip install 'honest-backtest[parquet]==0.2.0' huggingface_hub requests scipy pandas pyarrow numpy
-      - name: Download PM corpus
+      - name: Download immutable PM corpus
         run: |
           python - <<'PY'
           from huggingface_hub import snapshot_download
-          snapshot_download(repo_id='kinzikdza/polymarket-updown-microstructure', repo_type='dataset', local_dir='pm_data', allow_patterns=['parquet/*'])
+          snapshot_download(
+              repo_id='kinzikdza/polymarket-updown-microstructure',
+              repo_type='dataset',
+              revision='26cadd348e84de2dbdb1e103afe55e1bd2b3f27c',
+              local_dir='pm_data',
+              allow_patterns=['parquet/*'],
+          )
           PY
       - name: Download frozen 3c replay
         env:
