@@ -45,6 +45,30 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+  mapping-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install mapping audit stack
+        run: python -m pip install huggingface_hub pandas pyarrow numpy
+      - name: Audit token-to-outcome mapping and raw OrderFilled schema
+        run: python main_sequence/mapping_audit.py
+      - name: Show mapping audit
+        if: always()
+        run: test ! -f mapping_audit/mapping_audit.json || python -m json.tool mapping_audit/mapping_audit.json
+      - name: Upload mapping audit
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: main-sequence-mapping-audit
+          path: mapping_audit/
+          if-no-files-found: warn
+          retention-days: 14
+
   bankroll-regression:
     runs-on: ubuntu-latest
     timeout-minutes: 20
