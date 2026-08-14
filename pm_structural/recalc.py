@@ -79,8 +79,6 @@ def download_binance_1m(start: date, end: date, cache_dir: Path) -> pd.DataFrame
     for c in ["open", "close"]:
         out[c] = pd.to_numeric(out[c], errors="coerce")
     out = out.dropna()
-    # Binance Vision spot archives use microsecond timestamps in newer files;
-    # normalize to milliseconds without guessing the archive vintage.
     for c in ["open_time", "close_time"]:
         vals = out[c].astype(np.int64)
         if int(vals.abs().median()) > 10**14:
@@ -104,13 +102,7 @@ class BinanceAnchor:
         closes = df["close"].to_numpy(float)
         lr = np.full_like(closes, np.nan, dtype=float)
         lr[1:] = np.diff(np.log(closes))
-        return cls(
-            df["open_time"].to_numpy(np.int64),
-            df["open"].to_numpy(float),
-            close_times,
-            closes,
-            lr,
-        )
+        return cls(df["open_time"].to_numpy(np.int64), df["open"].to_numpy(float), close_times, closes, lr)
 
     def open_price(self, open_ts_s: int) -> float:
         t = int(open_ts_s) * 1000
@@ -120,7 +112,6 @@ class BinanceAnchor:
         return float(self.opens[i])
 
     def rv_annualized(self, ts_ms: int, minutes: int = 60) -> float:
-        # A close is usable only after its close_time; strict no-lookahead.
         hi = int(np.searchsorted(self.close_times, int(ts_ms), side="right"))
         lo_t = int(ts_ms) - minutes * 60_000
         lo = int(np.searchsorted(self.close_times, lo_t, side="left"))
@@ -135,10 +126,7 @@ class BinanceAnchor:
 def deribit_instruments() -> pd.DataFrame:
     rows = []
     for expired in ("true", "false"):
-        obj = fetch_json(
-            f"{DERIBIT_BASE}/get_instruments",
-            {"currency": "BTC", "kind": "option", "expired": expired},
-        )
+        obj = fetch_json(f"{DERIBIT_BASE}/get_instruments", {"currency": "BTC", "kind": "option", "expired": expired})
         rows.extend(obj.get("result", []))
     if not rows:
         raise RuntimeError("Deribit returned no BTC option instruments")
@@ -148,8 +136,7 @@ def deribit_instruments() -> pd.DataFrame:
     return df.dropna(subset=["instrument_name", "expiration_timestamp", "strike"])
 
 
-def select_deribit_instruments(inst: pd.DataFrame, bn: pd.DataFrame,
-                               start: date, end: date) -> list[str]:
+def select_deribit_instruments(inst: pd.DataFrame, bn: pd.DataFrame, start: date, end: date) -> list[str]:
     selected: set[str] = set()
     bn2 = bn.copy()
     bn2["day"] = pd.to_datetime(bn2["open_time"], unit="ms", utc=True).dt.date
@@ -159,8 +146,7 @@ def select_deribit_instruments(inst: pd.DataFrame, bn: pd.DataFrame,
         if not spot or not math.isfinite(float(spot)):
             continue
         noon = int(datetime(d.year, d.month, d.day, 12, tzinfo=timezone.utc).timestamp() * 1000)
-        x = inst[(inst["expiration_timestamp"] > noon + 7 * DAY_MS)
-                 & (inst["expiration_timestamp"] < noon + 65 * DAY_MS)].copy()
+        x = inst[(inst["expiration_timestamp"] > noon + 7 * DAY_MS) & (inst["expiration_timestamp"] < noon + 65 * DAY_MS)].copy()
         if x.empty:
             continue
         expiries = np.array(sorted(x["expiration_timestamp"].unique()), dtype=float)
@@ -176,8 +162,7 @@ def select_deribit_instruments(inst: pd.DataFrame, bn: pd.DataFrame,
     return sorted(selected)
 
 
-def fetch_deribit_trades(instruments: list[str], start: date, end: date,
-                          cache_path: Path) -> pd.DataFrame:
+def fetch_deribit_trades(instruments: list[str], start: date, end: date, cache_path: Path) -> pd.DataFrame:
     if cache_path.exists():
         return pd.read_parquet(cache_path)
     start_ms = int(datetime(start.year, start.month, start.day, tzinfo=timezone.utc).timestamp() * 1000)
@@ -185,38 +170,51 @@ def fetch_deribit_trades(instruments: list[str], start: date, end: date,
     end_ms = int(datetime(end_d.year, end_d.month, end_d.day, tzinfo=timezone.utc).timestamp() * 1000) - 1
     all_rows = []
     for idx, name in enumerate(instruments, 1):
-        start_seq = None
-        while True:
-            params = {
-                "instrument_name": name,
-                "start_timestamp": start_ms,
-                "end_timestamp": end_ms,
-                "count": 1000,
-                "sorting": "asc",
-            }
-            if start_seq is not None:
-                params["start_seq"] = start_seq
-            obj = fetch_json(f"{DERIBIT_BASE}/get_last_trades_by_instrument", params)
+        # Timestamp and sequence bounds are separate Deribit pagination modes.
+        # First delimit the requested historical window by trade_seq, then page
+        # only by sequence so equal-millisecond trades cannot be skipped.
+        first_obj = fetch_json(
+            f"{DERIBIT_BASE}/get_last_trades_by_instrument",
+            {"instrument_name": name, "start_timestamp": start_ms, "end_timestamp": end_ms, "count": 1, "sorting": "asc"},
+        )
+        first_rows = first_obj.get("result", {}).get("trades", [])
+        if not first_rows:
+            if idx % 20 == 0:
+                print(f"Deribit instruments fetched: {idx}/{len(instruments)} rows={len(all_rows)}", flush=True)
+            continue
+        last_obj = fetch_json(
+            f"{DERIBIT_BASE}/get_last_trades_by_instrument",
+            {"instrument_name": name, "start_timestamp": start_ms, "end_timestamp": end_ms, "count": 1, "sorting": "desc"},
+        )
+        last_rows = last_obj.get("result", {}).get("trades", [])
+        if not last_rows:
+            continue
+        start_seq = int(first_rows[0]["trade_seq"])
+        end_seq = int(last_rows[0]["trade_seq"])
+        while start_seq <= end_seq:
+            obj = fetch_json(
+                f"{DERIBIT_BASE}/get_last_trades_by_instrument",
+                {"instrument_name": name, "start_seq": start_seq, "end_seq": end_seq, "count": 1000, "sorting": "asc"},
+            )
             result = obj.get("result", {})
             rows = result.get("trades", [])
             if not rows:
                 break
-            all_rows.extend(rows)
-            if not result.get("has_more"):
-                break
-            seqs = [r.get("trade_seq") for r in rows if r.get("trade_seq") is not None]
+            all_rows.extend(r for r in rows if start_ms <= int(r.get("timestamp", -1)) <= end_ms)
+            seqs = [int(r["trade_seq"]) for r in rows if r.get("trade_seq") is not None]
             if not seqs:
                 break
             new_start = max(seqs) + 1
-            if start_seq is not None and new_start <= start_seq:
-                raise RuntimeError(f"Deribit pagination stalled for {name}")
+            if new_start <= start_seq:
+                raise RuntimeError(f"Deribit sequence pagination stalled for {name}")
             start_seq = new_start
+            if not result.get("has_more"):
+                break
         if idx % 20 == 0:
             print(f"Deribit instruments fetched: {idx}/{len(instruments)} rows={len(all_rows)}", flush=True)
     if not all_rows:
         raise RuntimeError("No Deribit option trades returned for selected instruments/date range")
     df = pd.DataFrame(all_rows)
-    # Keep lit/simple trades; block/combo prints can be negotiated and are not a clean anchor.
     for c in ["block_trade_id", "block_rfq_id", "combo_id", "combo_trade_id"]:
         if c in df.columns:
             df = df[df[c].isna()]
@@ -242,8 +240,7 @@ class DeribitAnchor:
         t = trades.merge(meta, on="instrument_name", how="left")
         t["tte_days"] = (t["expiration_timestamp"] - t["timestamp"]) / DAY_MS
         t["abs_log_mny"] = np.abs(np.log(t["strike"] / t["index_price"]))
-        t = t[(t["tte_days"] >= 7) & (t["tte_days"] <= 65)
-              & (t["abs_log_mny"] <= 0.15) & (t["iv"] > 1) & (t["iv"] < 300)]
+        t = t[(t["tte_days"] >= 7) & (t["tte_days"] <= 65) & (t["abs_log_mny"] <= 0.15) & (t["iv"] > 1) & (t["iv"] < 300)]
         t = t.sort_values("timestamp")
         return cls(t["timestamp"].to_numpy(np.int64), t["iv"].to_numpy(float) / 100.0)
 
@@ -277,8 +274,7 @@ class StructuralMispricing(Signal):
     durations = ("15m",)
     once = True
 
-    def __init__(self, bn: BinanceAnchor, der: DeribitAnchor, threshold: float,
-                 min_s2c: int = 60, max_s2c: int = 600, size: float = 5.0):
+    def __init__(self, bn: BinanceAnchor, der: DeribitAnchor, threshold: float, min_s2c: int = 60, max_s2c: int = 600, size: float = 5.0):
         self.bn = bn
         self.der = der
         self.threshold = float(threshold)
@@ -304,14 +300,12 @@ class StructuralMispricing(Signal):
         spot_now = float(ctx.spot[i])
         if not (open_bn > 0 and spot_now > 0):
             return None
-        # Relative spot move cancels the Binance-vs-Polymarket oracle level basis.
         rel = spot_now / open_bn
         p_rv = digital_prob_up(rel, s2c, rv)
         p_iv = digital_prob_up(rel, s2c, div)
         if not (math.isfinite(p_rv) and math.isfinite(p_iv)):
             return None
         p_lo, p_hi = min(p_rv, p_iv), max(p_rv, p_iv)
-
         ya, na = float(ctx.ya[i]), float(ctx.na[i])
         yas, nas = float(ctx.yas[i]), float(ctx.nas[i])
         fr = float(ctx.meta.fee_rate or 0.0)
@@ -319,8 +313,6 @@ class StructuralMispricing(Signal):
         fee_n = fr * na * (1.0 - na) if 0 < na < 1 else math.inf
         edge_y = p_lo - ya - fee_y
         edge_n = (1.0 - p_hi) - na - fee_n
-
-        # Require enough displayed top-of-book size for the full 5-share order.
         buy_yes = edge_y >= self.threshold and yas >= self.size
         buy_no = edge_n >= self.threshold and nas >= self.size
         if not buy_yes and not buy_no:
@@ -329,14 +321,8 @@ class StructuralMispricing(Signal):
             yes, ask, edge = True, ya, edge_y
         else:
             yes, ask, edge = False, na, edge_n
-        tag = json.dumps({
-            "edge_signal": round(edge, 6), "p_rv": round(p_rv, 6),
-            "p_deribit": round(p_iv, 6), "rv": round(rv, 6),
-            "deribit_iv": round(div, 6), "rel_spot": round(rel, 8),
-            "s2c": s2c,
-        }, separators=(",", ":"))
-        return Decision(i=i, ts_ms=ts, token_yes=yes, action="taker",
-                        target_px=ask, size=self.size, tag=tag)
+        tag = json.dumps({"edge_signal": round(edge, 6), "p_rv": round(p_rv, 6), "p_deribit": round(p_iv, 6), "rv": round(rv, 6), "deribit_iv": round(div, 6), "rel_spot": round(rel, 8), "s2c": s2c}, separators=(",", ":"))
+        return Decision(i=i, ts_ms=ts, token_yes=yes, action="taker", target_px=ask, size=self.size, tag=tag)
 
 
 def split_ctxs(ctxs):
@@ -371,28 +357,23 @@ def main():
     end = date.fromisoformat(args.end)
     args.out.mkdir(parents=True, exist_ok=True)
     args.cache.mkdir(parents=True, exist_ok=True)
-
     print("Loading Polymarket BTC 15m corpus...", flush=True)
     ctxs = list(load_corpus(str(args.pm_dir), coins=("btc",), durations=("15m",)))
     if not ctxs:
         raise RuntimeError("No BTC 15m Polymarket contexts loaded")
     print(f"PM slots: {len(ctxs)}", flush=True)
-
     print("Downloading official Binance BTCUSDT 1m...", flush=True)
     bn_df = download_binance_1m(start, end, args.cache / "binance")
     bn = BinanceAnchor.from_df(bn_df)
-
     print("Discovering Deribit option instruments...", flush=True)
     inst = deribit_instruments()
     selected = select_deribit_instruments(inst, bn_df, start, end)
     print(f"Selected Deribit instruments: {len(selected)}", flush=True)
     (args.out / "selected_deribit_instruments.txt").write_text("\n".join(selected) + "\n")
-
     print("Fetching actual Deribit option trades...", flush=True)
     der_trades = fetch_deribit_trades(selected, start, end, args.cache / "deribit_trades.parquet")
     der = DeribitAnchor.from_trades(der_trades, inst)
     print(f"Deribit usable anchor trades: {len(der.ts)}", flush=True)
-
     train, holdout, cut = split_ctxs(ctxs)
     thresholds = [0.02, 0.03, 0.05, 0.08, 0.10]
     results = {
@@ -414,18 +395,12 @@ def main():
         hold_row = evaluate(sig, holdout, latency_ms=1000, tape_window_ms=1500)
         recs = run_signal(sig, ctxs, latency_ms=1000, tape_window_ms=1500)
         save_records(recs, args.out / f"records_{sig.name}.csv")
-        results["thresholds"][sig.name] = {
-            "all": all_row, "first_half": train_row, "holdout_second_half": hold_row,
-        }
+        results["thresholds"][sig.name] = {"all": all_row, "first_half": train_row, "holdout_second_half": hold_row}
         print(json.dumps({"name": sig.name, "all": all_row, "holdout": hold_row}, default=str), flush=True)
-
     (args.out / "summary.json").write_text(json.dumps(results, indent=2, default=str))
-    # Compact markdown summary for auditability.
     lines = [
-        "# BTC 15m structural-mispricing replay",
-        "",
-        f"PM slots: {len(ctxs)}; Deribit usable trades: {len(der.ts)}; split: {results['split_close_utc']}",
-        "",
+        "# BTC 15m structural-mispricing replay", "",
+        f"PM slots: {len(ctxs)}; Deribit usable trades: {len(der.ts)}; split: {results['split_close_utc']}", "",
         "| threshold | all persist n | all edge | all fee-ROI | holdout persist n | holdout edge | holdout fee-ROI |",
         "|---:|---:|---:|---:|---:|---:|---:|",
     ]
