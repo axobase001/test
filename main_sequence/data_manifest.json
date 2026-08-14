@@ -1,10 +1,11 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "created_utc": "2026-08-15",
   "policy": {
     "strict_backtest": "Only sources with causal timestamps plus tape/full-depth evidence sufficient to grade fills may contribute executable PnL.",
     "signal_robustness": "Snapshot-only or proxy-fill sources may validate signal direction but may not contribute strict executable PnL.",
-    "future_leak_gate": "Every feature observation timestamp must be <= decision timestamp. Settlement/outcome fields are forbidden from features, sizing, filtering, fitting, scaling, early stopping, and policy selection."
+    "future_leak_gate": "Every feature observation timestamp must be <= decision timestamp. Settlement/outcome fields are forbidden from features, sizing, filtering, fitting, scaling, early stopping, and policy selection.",
+    "execution_grading": "Post-decision observations may be used only to grade whether an already-fixed order would have filled; they may never alter the signal, side, price, size, or eligibility decided at decision time."
   },
   "sources": {
     "kinzikdza_pm_microstructure": {
@@ -14,27 +15,32 @@
       "classification": "strict_backtest",
       "clean_start": "2026-05-27",
       "clean_end": "2026-06-24",
+      "probe_paths": ["parquet/book_snapshots.parquet", "parquet/pm_trades.parquet"],
       "notes": "Existing frozen Main Sequence corpus. Earlier collection is excluded from strict results because of known resolution contamination."
     },
     "solal_crypto_updown": {
       "repo_id": "Solal9/polymarket-crypto-updown-binary",
       "repo_type": "dataset",
       "revision": "c17800caa413042941bbd8a9f266b23b6f5f8ed4",
-      "classification": "candidate_pending_schema_and_gap_audit",
-      "notes": "BTC 15m/1h candidate. Raw timestamps and continuity must be audited before promotion."
+      "classification": "signal_robustness",
+      "probe_paths": ["polymarket_btc_15m_snapshots.csv", "polymarket_btc_15m_orderbook.csv"],
+      "forbidden_feature_columns": ["resolution_time", "closed_status", "outcome_prices"],
+      "notes": "Actual BTC15m snapshot coverage audited as 2026-03-14 through 2026-04-25. Snapshot/orderbook source; resolution fields are never decision features."
     },
     "obadiaha_crypto_5m_15m": {
       "repo_id": "obadiaha/polymarket-crypto-5m-15m",
       "repo_type": "dataset",
       "revision": "11793901f0ac89c5a6c51123a6ccd29a3aaf8f4c",
-      "classification": "candidate_robustness",
-      "notes": "Use dense audited slices only; do not infer continuity from dataset-level date labels."
+      "classification": "candidate_strict_coarse_book_pending_trade_schema",
+      "probe_paths": ["orderbooks/2026-03-14.parquet", "trades/2026-03-14.parquet"],
+      "notes": "Sparse January files are not treated as usable coverage. Dense March orderbooks plus trade files are being audited. Any strict promotion must account for the approximately 10-second book cadence."
     },
     "arena_capture": {
       "repo_id": "Alezanello/polymarket-arena-capture",
       "repo_type": "dataset",
       "revision": "603094b4becdeccd700266050dca4035408418e5",
-      "classification": "candidate_pending_schema_and_tape_audit",
+      "classification": "candidate_strict_pending_trade_schema",
+      "probe_paths": ["cap_book.parquet", "cap_trades.parquet"],
       "notes": "Raw capture candidate for later-period cross-validation."
     },
     "vinayak_orderbooks": {
@@ -44,19 +50,28 @@
       "notes": "Snapshot/proxy execution only. Never report its proxy fills as strict executable PnL."
     },
     "openmarket_unified": {
-      "repo_id": "openmarket/uie-event-20260212-20260515",
-      "sample_repo_id": "openmarket/uie-event-sample-20260228",
+      "repo_id": "gregyoung14/openmarket-btc-polymarket",
+      "repo_type": "dataset",
+      "revision": "74502466d1a7cef56395bfd8d0b465fbebc849cf",
+      "classification": "candidate_strict_signal_plus_external_tape",
+      "probe_paths": ["polymarket_ticks_ms.parquet", "binance_ticks_ms.parquet", "market_meta.parquet", "lag_pairs_ms.parquet"],
+      "notes": "Archived v0.4.3-unified / source tag v0.5.2. Use as synchronized signal/order-book-event layer. Do not use top-of-book alone to assert executable fills; pair with independent on-chain tape where dates overlap."
+    },
+    "krish_v1_onchain_fills": {
+      "repo_id": "krish301/polymarket-crypto-trades-v1",
       "repo_type": "dataset",
       "revision": null,
-      "classification": "candidate_strict_pending_immutable_hf_sha",
-      "notes": "Promising event-level Polymarket/Binance source. Resolve and freeze exact HF commit SHA before any reported replay."
+      "discover_revision_only": true,
+      "classification": "candidate_strict_execution_ground_truth_pending_pin",
+      "notes": "BTC15m v1-era raw OrderFilled ground truth, 2026-03-01 through 2026-04-28. Resolve current HF SHA in audit, then pin before use. Settlement metadata may label outcomes only after decisions and is never a decision feature."
     },
     "brockmisner_crypto_derivatives": {
       "repo_id": "BrockMisner/polymarket_crypto_derivatives",
       "repo_type": "dataset",
       "revision": null,
+      "discover_revision_only": true,
       "classification": "manifest_only_pending_pin_and_sample_audit",
-      "notes": "Large historical archive. Inspect manifest and small slices before materializing the full corpus."
+      "notes": "Large historical archive. Resolve immutable HEAD, inspect manifest and small slices before materializing the full corpus."
     }
   }
 }
