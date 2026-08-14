@@ -3,6 +3,7 @@ from __future__ import annotations
 import gzip
 import hashlib
 import json
+import urllib.request
 from pathlib import Path
 
 import pandas as pd
@@ -28,6 +29,12 @@ def sha256(path: Path) -> str:
 
 def dl(repo: str, rev: str, name: str) -> Path:
     return Path(hf_hub_download(repo_id=repo, repo_type="dataset", revision=rev, filename=name))
+
+
+def http_json(url: str) -> dict:
+    req = urllib.request.Request(url, headers={"User-Agent": "main-sequence-audit/1"})
+    with urllib.request.urlopen(req, timeout=30) as r:
+        return json.loads(r.read().decode("utf-8"))
 
 
 def frame_probe(path: Path, name: str) -> dict:
@@ -108,6 +115,22 @@ def main() -> None:
         report["obadiaha"][name] = frame_probe(p, name)
         report["obadiaha"][f"{name}_exact_slug"] = rows_for_slug(p, SLUG)
 
+    exact_market = report["obadiaha"]["markets_exact_slug"].get("records", [])
+    if exact_market:
+        condition_id = str(exact_market[0]["condition_id"])
+        report["official_clob"] = {
+            "condition_id": condition_id,
+            "endpoint": f"https://clob.polymarket.com/clob-markets/{condition_id}",
+        }
+        try:
+            info = http_json(report["official_clob"]["endpoint"])
+            report["official_clob"]["response"] = info
+            report["official_clob"]["token_outcomes"] = {
+                str(x.get("t")): str(x.get("o")) for x in info.get("t", []) if x.get("t") is not None
+            }
+        except Exception as exc:
+            report["official_clob"]["error"] = repr(exc)
+
     api = HfApi()
     files = api.list_repo_files(repo_id=KR_REPO, repo_type="dataset", revision=KR_REV)
     special = [p for p in files if ("metadata" in p.lower() or "manifest" in p.lower() or "_index" in p.lower())]
@@ -120,7 +143,6 @@ def main() -> None:
     if kr_fill_rel in files:
         report["krish"]["fills"] = fills_probe(dl(KR_REPO, KR_REV, kr_fill_rel))
 
-    # Probe any actual manifest/index file instead of trusting the README layout.
     json_candidates = [p for p in special if p.endswith(".json") and ("btc/15m" in p or "trades_by_window" in p)]
     for rel in json_candidates[:5]:
         try:
@@ -128,7 +150,6 @@ def main() -> None:
         except Exception as exc:
             report["krish"].setdefault("json_probe_errors", {})[rel] = repr(exc)
 
-    # Cross-check the token IDs seen in Obadiaha's exact window against the raw on-chain asset IDs.
     book_exact = report["obadiaha"]["book_exact_slug"]["records"]
     book_tokens = sorted({str(r.get("token_id")) for r in book_exact if r.get("token_id") is not None})
     fill_assets = set()
@@ -139,6 +160,9 @@ def main() -> None:
         "book_token_ids": book_tokens,
         "sample_fill_non_usdc_asset_ids": sorted(fill_assets),
         "book_tokens_seen_in_fill_sample": sorted(set(book_tokens) & fill_assets),
+        "official_token_outcomes_for_book_tokens": {
+            t: report.get("official_clob", {}).get("token_outcomes", {}).get(t) for t in book_tokens
+        },
     }
 
     (out / "mapping_audit.json").write_text(json.dumps(report, indent=2, default=str))
