@@ -31,13 +31,14 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install 'honest-backtest[parquet]==0.2.0' huggingface_hub requests scipy pandas pyarrow numpy
 
-      - name: Download public Polymarket microstructure corpus
+      - name: Download pinned Polymarket microstructure corpus
         run: |
           python - <<'PY'
           from huggingface_hub import snapshot_download
           snapshot_download(
               repo_id='kinzikdza/polymarket-updown-microstructure',
               repo_type='dataset',
+              revision='26cadd348e84de2dbdb1e103afe55e1bd2b3f27c',
               local_dir='pm_data',
               allow_patterns=['parquet/*'],
           )
