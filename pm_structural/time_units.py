@@ -1,17 +1,34 @@
 from __future__ import annotations
 
-import math
 import re
 
 import numpy as np
 import pandas as pd
 
 
+def _datetime_ints_to_ms(dt: pd.Series) -> pd.Series:
+    """Convert a pandas datetime Series to epoch ms without assuming ns storage."""
+    unit = getattr(dt.dtype, "unit", "ns")
+    raw = dt.astype("int64")
+    if unit == "ns":
+        vals = raw // 1_000_000
+    elif unit == "us":
+        vals = raw // 1_000
+    elif unit == "ms":
+        vals = raw
+    elif unit == "s":
+        vals = raw * 1_000
+    else:
+        raise RuntimeError(f"unsupported pandas datetime unit: {unit!r}")
+    return vals.astype(np.int64)
+
+
 def epoch_series_to_ms(s: pd.Series) -> pd.Series:
     """Normalize numeric epoch s/ms/us/ns or datetime-like strings to nullable epoch ms.
 
-    Numeric magnitudes are detected row-wise, so mixed historical exports fail less
-    silently than pd.to_datetime's default integer-as-nanoseconds behavior.
+    Numeric magnitudes are detected row-wise. Datetime-like strings are converted
+    using the actual pandas datetime dtype unit, so pandas 2/3 ns/us resolution
+    differences cannot silently shrink timestamps by 1000x.
     """
     numeric = pd.to_numeric(s, errors="coerce")
     out = pd.Series(pd.array([pd.NA] * len(s), dtype="Int64"), index=s.index)
@@ -38,7 +55,8 @@ def epoch_series_to_ms(s: pd.Series) -> pd.Series:
         dt = pd.to_datetime(s[text_mask], utc=True, errors="coerce")
         good = dt.notna()
         if good.any():
-            out.loc[dt.index[good]] = (dt[good].astype("int64") // 1_000_000).astype(np.int64)
+            good_dt = dt[good]
+            out.loc[good_dt.index] = _datetime_ints_to_ms(good_dt)
     return out.astype("Int64")
 
 
