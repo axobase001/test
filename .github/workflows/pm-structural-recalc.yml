@@ -9,15 +9,16 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 env:
   PYTHONUNBUFFERED: '1'
   HF_HUB_DISABLE_TELEMETRY: '1'
 
 jobs:
-  backtest:
+  regime-matrix:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
@@ -41,30 +42,38 @@ jobs:
               allow_patterns=['parquet/*'],
           )
           PY
-          ls -lh pm_data/parquet
 
-      - name: Run causal structural-mispricing replay
+      - name: Download frozen 3c replay artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          python pm_structural/recalc.py \
+          mkdir -p prior
+          gh run download 31771161358 -n pm-structural-recalc-results -D prior
+          test -f prior/results/records_structural_03c.csv
+          test -f prior/results/summary.json
+          ls -lh prior/results/records_structural_03c.csv prior/results/summary.json
+
+      - name: Run frozen 3c regime matrix
+        run: |
+          python pm_structural/regime_matrix.py \
             --pm-dir pm_data/parquet \
-            --out results \
-            --cache cache \
+            --records prior/results/records_structural_03c.csv \
+            --prior-summary prior/results/summary.json \
+            --out regime_results \
+            --cache cache_regime \
             --start 2026-05-27 \
             --end 2026-06-24
 
-      - name: Show compact result
+      - name: Show regime result
         if: always()
         run: |
-          if [ -f results/SUMMARY.md ]; then cat results/SUMMARY.md; fi
-          if [ -f results/summary.json ]; then python -m json.tool results/summary.json | head -n 250; fi
+          if [ -f regime_results/REGIME_SUMMARY.md ]; then cat regime_results/REGIME_SUMMARY.md; fi
 
-      - name: Upload result artifact
+      - name: Upload regime artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: pm-structural-recalc-results
-          path: |
-            results/
-            cache/deribit_trades.parquet
+          name: pm-structural-regime-matrix
+          path: regime_results/
           if-no-files-found: warn
           retention-days: 7
