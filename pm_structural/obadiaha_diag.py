@@ -42,9 +42,16 @@ def main() -> None:
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--cache", type=Path, required=True)
     ap.add_argument("--day", default="2026-03-14")
+    ap.add_argument("--anchor-start", default="2026-03-02")
+    ap.add_argument("--anchor-end", default="2026-03-18")
     ap.add_argument("--threshold", type=float, default=0.03)
     args = ap.parse_args(); args.out.mkdir(parents=True, exist_ok=True); args.cache.mkdir(parents=True, exist_ok=True)
-    d = date.fromisoformat(args.day); hf_cache = args.cache / "hf"
+    d = date.fromisoformat(args.day)
+    anchor_start = date.fromisoformat(args.anchor_start)
+    anchor_end = date.fromisoformat(args.anchor_end)
+    if not (anchor_start <= d <= anchor_end):
+        raise ValueError("diagnostic --day must lie inside anchor window")
+    hf_cache = args.cache / "hf"
 
     markets = pd.read_parquet(hf_file("markets/all.parquet", hf_cache))
     markets["market_id"] = markets["market_id"].astype(str)
@@ -59,10 +66,14 @@ def main() -> None:
         for r in m.itertuples() if pd.notna(r.start_dt) and pd.notna(r.end_dt)
     }
 
-    bn_df = download_binance_1m(d, d, args.cache / "binance")
+    # Use the same broad causal anchor universe as the full March replay. Restricting
+    # Deribit instrument discovery to a single day can select instruments with no
+    # trades that day and falsely make every downstream pre-gate look empty.
+    bn_df = download_binance_1m(anchor_start, anchor_end, args.cache / "binance")
     bn = BinanceAnchor.from_df(bn_df)
-    inst = deribit_instruments(); selected = select_deribit_instruments(inst, bn_df, d, d)
-    der_trades = fetch_deribit_trades(selected, d, d, args.cache / "deribit_trades.parquet")
+    inst = deribit_instruments()
+    selected = select_deribit_instruments(inst, bn_df, anchor_start, anchor_end)
+    der_trades = fetch_deribit_trades(selected, anchor_start, anchor_end, args.cache / "deribit_trades.parquet")
     der = DeribitAnchor.from_trades(der_trades, inst)
 
     bcols = ["timestamp", "asset", "market_id", "condition_id", "token_id", "best_bid", "best_ask", "mid_price"]
@@ -132,7 +143,6 @@ def main() -> None:
             # Deliberately mapping-agnostic and maximally permissive: any fair paired with any ask.
             gross = max(fair_up - asks[0], fair_up - asks[1], fair_down - asks[0], fair_down - asks[1])
             cross_gross.append(float(gross))
-            # If collector rows happened to be ordered consistently, keep both possible mappings as diagnostics.
             map_a = max(fair_up - asks[0], fair_down - asks[1])
             map_b = max(fair_up - asks[1], fair_down - asks[0])
             side_blind_pair_gross.append(float(max(map_a, map_b)))
@@ -148,7 +158,9 @@ def main() -> None:
 
     tops = sorted(tops, key=lambda x: x["cross_gross_edge"], reverse=True)[:100]
     report = {
-        "day": d.isoformat(), "threshold": args.threshold, "counts": counts,
+        "day": d.isoformat(), "threshold": args.threshold,
+        "anchor_window": [anchor_start.isoformat(), anchor_end.isoformat()],
+        "counts": counts,
         "selected_deribit_instruments": len(selected), "usable_deribit_trades": len(der.ts),
         "quantiles": {
             "ask": q(ask_vals), "bid": q(bid_vals), "ask_sum_two_tokens": q(ask_sum), "bid_sum_two_tokens": q(bid_sum),
