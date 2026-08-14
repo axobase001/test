@@ -30,7 +30,7 @@ jobs:
           PYTHONPATH=. python pm_structural/openmarket_probe.py \
             --out openmarket_probe \
             --cache openmarket_probe_cache \
-            --day 2026-03-14 \
+            --day 2026-03-15 \
             --coverage-start 2026-03-02 \
             --coverage-end 2026-03-18 \
             --max-lag-ms 2000
