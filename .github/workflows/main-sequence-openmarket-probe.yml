@@ -24,7 +24,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install probe stack
-        run: python -m pip install huggingface_hub pandas pyarrow numpy requests scipy
+        run: python -m pip install 'honest-backtest[parquet]==0.2.0' huggingface_hub pandas pyarrow numpy requests scipy
       - name: Compare OpenMarket quote truth with independent Obadiaha tape
         run: |
           PYTHONPATH=. python pm_structural/openmarket_probe.py \
