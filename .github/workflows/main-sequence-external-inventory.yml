@@ -4,9 +4,7 @@ on:
   pull_request:
     branches: [ main ]
     paths:
-      - 'main_sequence/external_inventory.py'
-      - 'main_sequence/external_inventory2.py'
-      - 'main_sequence/external_vinayak_v1.py'
+      - 'main_sequence/**'
       - '.github/workflows/main-sequence-external-inventory.yml'
 
 permissions:
@@ -18,30 +16,76 @@ env:
   HF_HUB_DISABLE_TELEMETRY: '1'
 
 jobs:
-  inventory:
+  pinned-source-audit:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Install inventory stack
-        run: python -m pip install huggingface_hub pandas pyarrow
-      - name: Inventory external sources
+      - name: Install audit stack
+        run: python -m pip install huggingface_hub pandas pyarrow numpy
+      - name: Audit immutable revisions and probe slices
         run: |
-          python main_sequence/external_inventory.py
-          python main_sequence/external_inventory2.py
-      - name: Upload inventory
+          python main_sequence/source_audit.py \
+            --manifest main_sequence/data_manifest.json \
+            --out source_audit \
+            --cache source_audit_cache \
+            --probe-max-mb 220
+      - name: Show source audit
+        if: always()
+        run: test ! -f source_audit/source_audit.json || python -m json.tool source_audit/source_audit.json
+      - name: Upload source audit
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: main-sequence-external-inventory
-          path: |
-            external_inventory/
-            external_inventory2/
-          retention-days: 7
+          name: main-sequence-source-audit
+          path: source_audit/
+          if-no-files-found: warn
+          retention-days: 14
 
-  frozen-v1-external-smoke:
+  bankroll-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install bankroll stack
+        run: python -m pip install pandas numpy
+      - name: Download frozen structural and latest v1 artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p prior frozen_v1
+          gh run download 31771161358 -n pm-structural-recalc-results -D prior
+          gh run download 31792440823 -n main-sequence-v1-results -D frozen_v1
+          test -f prior/results/records_structural_03c.csv
+          test -f frozen_v1/frozen_3c_fade_fills.csv
+          test -f frozen_v1/main_sequence_v1_value_fills.csv
+          test -f frozen_v1/main_sequence_v1_exec_fills.csv
+      - name: Replay user bankroll rules causally
+        run: |
+          for policy in frozen_3c_fade main_sequence_v1_value main_sequence_v1_exec; do
+            python main_sequence/bankroll.py \
+              --fills frozen_v1/${policy}_fills.csv \
+              --records prior/results/records_structural_03c.csv \
+              --out bankroll/${policy} \
+              --initial 50 --base-trade 5 --single-cap 100 --market-cap 200
+          done
+      - name: Show bankroll regression
+        run: |
+          for x in bankroll/*/bankroll_summary.json; do echo ==== $x; python -m json.tool $x; done
+      - name: Upload bankroll regression
+        uses: actions/upload-artifact@v4
+        with:
+          name: main-sequence-bankroll-regression
+          path: bankroll/
+          retention-days: 14
+
+  frozen-v1-external-robustness:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
@@ -54,36 +98,39 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install --index-url https://download.pytorch.org/whl/cpu torch
           python -m pip install 'honest-backtest[parquet]==0.2.0' requests scipy pandas pyarrow numpy
-      - name: Clone independent BTC15m collector
-        run: git clone --depth 1 https://github.com/Vinayak19112003/Polymarket-orderbooks.git vinayak
-      - name: Download frozen Main Sequence v1 artifact
+      - name: Clone pinned independent BTC15m collector
+        run: |
+          git clone https://github.com/Vinayak19112003/Polymarket-orderbooks.git vinayak
+          git -C vinayak checkout 280a29b9b818cc742c096af81c62e4bf899d44dc
+          test "$(git -C vinayak rev-parse HEAD)" = "280a29b9b818cc742c096af81c62e4bf899d44dc"
+      - name: Download latest frozen Main Sequence v1 artifact
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p frozen_v1
-          gh run download 31786389773 -n main-sequence-v1-results -D frozen_v1
+          gh run download 31792440823 -n main-sequence-v1-results -D frozen_v1
           test -f frozen_v1/main_sequence_v1.pt
           test -f frozen_v1/scaler.npz
-          ls -lh frozen_v1/main_sequence_v1.pt frozen_v1/scaler.npz
-      - name: Run two-day external OOD smoke
+      - name: Run extended external OOD robustness slice
         run: |
           PYTHONPATH=. python main_sequence/external_vinayak_v1.py \
             --csv-dir vinayak/csv_data \
             --model-dir frozen_v1 \
-            --out external_v1_smoke \
+            --out external_v1_robustness \
             --cache external_v1_cache \
             --start 2026-03-24 \
-            --end 2026-03-25
-      - name: Show external result
+            --end 2026-04-15
+      - name: Mark execution grade explicitly
         if: always()
         run: |
-          if [ -f external_v1_smoke/SUMMARY.md ]; then cat external_v1_smoke/SUMMARY.md; fi
-          if [ -f external_v1_smoke/summary.json ]; then python -m json.tool external_v1_smoke/summary.json; fi
-      - name: Upload external smoke
+          echo 'CLASSIFICATION=SIGNAL_ROBUSTNESS; snapshot/proxy-fill collector; not strict executable PnL' | tee external_v1_robustness/EXECUTION_GRADE.txt
+          test ! -f external_v1_robustness/SUMMARY.md || cat external_v1_robustness/SUMMARY.md
+          test ! -f external_v1_robustness/summary.json || python -m json.tool external_v1_robustness/summary.json
+      - name: Upload robustness artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: main-sequence-v1-external-smoke
-          path: external_v1_smoke/
+          name: main-sequence-v1-external-robustness
+          path: external_v1_robustness/
           if-no-files-found: warn
-          retention-days: 7
+          retention-days: 14
