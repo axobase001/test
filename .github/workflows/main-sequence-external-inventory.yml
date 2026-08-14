@@ -5,6 +5,7 @@ on:
     branches: [ main ]
     paths:
       - 'main_sequence/external_inventory.py'
+      - 'main_sequence/external_inventory2.py'
       - '.github/workflows/main-sequence-external-inventory.yml'
 
 permissions:
@@ -26,10 +27,14 @@ jobs:
       - name: Install inventory stack
         run: python -m pip install huggingface_hub pandas pyarrow
       - name: Inventory external sources
-        run: python main_sequence/external_inventory.py
+        run: |
+          python main_sequence/external_inventory.py
+          python main_sequence/external_inventory2.py
       - name: Upload inventory
         uses: actions/upload-artifact@v4
         with:
           name: main-sequence-external-inventory
-          path: external_inventory/
+          path: |
+            external_inventory/
+            external_inventory2/
           retention-days: 7
