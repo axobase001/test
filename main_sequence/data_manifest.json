@@ -1,11 +1,12 @@
 {
-  "schema_version": 3,
+  "schema_version": 4,
   "created_utc": "2026-08-15",
   "policy": {
     "strict_backtest": "Only sources with causal timestamps plus tape/full-depth evidence sufficient to grade fills may contribute executable PnL.",
     "signal_robustness": "Snapshot-only or proxy-fill sources may validate signal direction but may not contribute strict executable PnL.",
     "future_leak_gate": "Every feature observation timestamp must be <= decision timestamp. Settlement/outcome fields are forbidden from features, sizing, filtering, fitting, scaling, early stopping, and policy selection.",
-    "execution_grading": "Post-decision observations may be used only to grade whether an already-fixed order would have filled; they may never alter the signal, side, price, size, or eligibility decided at decision time."
+    "execution_grading": "Post-decision observations may be used only to grade whether an already-fixed order would have filled; they may never alter the signal, side, price, size, or eligibility decided at decision time.",
+    "oracle_rule": "BTC Up/Down settlement is defined by the market resolution oracle. Binance may be used for fast spot/RV anchoring, but oracle-basis experiments must preserve a Chainlink-consistent strike/underlying pair and remain causal."
   },
   "sources": {
     "kinzikdza_pm_microstructure": {
@@ -31,10 +32,10 @@
       "repo_id": "obadiaha/polymarket-crypto-5m-15m",
       "repo_type": "dataset",
       "revision": "11793901f0ac89c5a6c51123a6ccd29a3aaf8f4c",
-      "classification": "candidate_strict_coarse_book_plus_onchain_tape",
+      "classification": "strict_tape_and_resolution_ground_truth_quote_robustness_only",
       "probe_paths": ["markets/all.parquet", "resolutions/all.parquet", "orderbooks/2026-03-14.parquet", "trades/2026-03-14.parquet"],
       "forbidden_feature_columns": ["resolved_at", "outcome"],
-      "notes": "Sparse January files are not treated as usable coverage. Dense March orderbooks are approximately 10-second snapshots. Resolutions are labels/settlement only. Strict promotion requires token-to-outcome mapping plus independent on-chain fill confirmation."
+      "notes": "Dense March Data API trade tape is retained as independent execution witness and resolution source. The approximately 10-second /book snapshots are not accepted as primary quote truth after cross-source audit: versus real tape, median causal lag was about 5.36s and median absolute price gap about 35.1c, with only about 14.4% within 5c."
     },
     "arena_capture": {
       "repo_id": "Alezanello/polymarket-arena-capture",
@@ -54,9 +55,24 @@
       "repo_id": "gregyoung14/openmarket-btc-polymarket",
       "repo_type": "dataset",
       "revision": "74502466d1a7cef56395bfd8d0b465fbebc849cf",
-      "classification": "candidate_strict_signal_plus_external_tape",
-      "probe_paths": ["polymarket_ticks_ms.parquet", "binance_ticks_ms.parquet", "market_meta.parquet", "lag_pairs_ms.parquet"],
-      "notes": "Archived v0.4.3-unified / source tag v0.5.2. Use as synchronized signal/event layer. Known unrecoverable 2026-04-22 through 2026-05-12 gap. Do not use top-of-book alone to assert executable fills."
+      "classification": "strict_primary_quote_truth_requires_independent_tape_for_fill",
+      "probe_paths": ["unified/polymarket_ticks_ms/date=YYYY-MM-DD/*.parquet", "unified/binance_ticks_ms/date=YYYY-MM-DD/*.parquet", "unified/market_meta/date=unpartitioned/*.parquet", "unified/lag_pairs_ms/date=YYYY-MM-DD/*.parquet"],
+      "notes": "Archived v0.4.3-unified / source tag v0.5.2. Cross-source audit against independent real tape found 31,088 causal matches, median quote-to-trade lag about 4ms, median absolute price gap about 1c, and about 93.1% within 5c. Use as primary PM quote/depth and synchronized Binance-tick layer. Known unrecoverable 2026-04-22 through 2026-05-12 gap. Executable fills still require independent post-decision tape corroboration."
+    },
+    "trent_crypto_derivatives": {
+      "repo_id": "trentmkelly/polymarket_crypto_derivatives",
+      "repo_type": "dataset",
+      "revision": "6be20463ce33795178c121e7bd15ed428904b5bd",
+      "classification": "strict_oracle_basis_and_full_depth_candidate",
+      "audited_btc15m_start": "2026-02-21T15:45:00Z",
+      "audited_btc15m_end": "2026-03-24T20:00:00Z",
+      "probe_paths": [
+        "btc15m_market1572828_2026-03-14_00-00-00_all/steps.parquet",
+        "btc15m_market1572828_2026-03-14_00-00-00_all/events.parquet",
+        "btc15m_market1572828_2026-03-14_00-00-00_all/book_levels.parquet"
+      ],
+      "forbidden_feature_columns": [],
+      "notes": "Immutable revision audited in CI. BTC15m episodes are approximately 100ms decision snapshots. steps.parquet contains causal chainlink_price and binance_price plus UP/DOWN BBO/depth summaries; events.parquet contains CLOB events/trades; book_levels.parquet contains normalized full depth. Use for predeclared same-threshold Binance-vs-Chainlink oracle-basis comparisons and, after execution semantics are validated, model features."
     },
     "krish_v1_onchain_fills": {
       "repo_id": "krish301/polymarket-crypto-trades-v1",
