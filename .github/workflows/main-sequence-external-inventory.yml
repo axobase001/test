@@ -5,6 +5,7 @@ on:
     branches: [ main ]
     paths:
       - 'main_sequence/**'
+      - 'pm_structural/**'
       - '.github/workflows/main-sequence-external-inventory.yml'
 
 permissions:
@@ -107,6 +108,49 @@ jobs:
         with:
           name: main-sequence-bankroll-regression
           path: bankroll/
+          retention-days: 14
+
+  march-strict-coarse-replay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install strict replay stack
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install 'honest-backtest[parquet]==0.2.0' huggingface_hub requests scipy pandas pyarrow numpy
+      - name: Run pinned March structural replay
+        run: |
+          PYTHONPATH=. python pm_structural/obadiaha_strict.py \
+            --out march_strict \
+            --cache march_cache \
+            --start 2026-03-02 \
+            --end 2026-03-18 \
+            --threshold 0.03 \
+            --latency-ms 1000 \
+            --tape-window-ms 15000 \
+            --base-stake 5
+      - name: Replay causal bankroll with capacity gates
+        run: |
+          python main_sequence/bankroll.py \
+            --fills march_strict/fills_strict_coarse.csv \
+            --out march_strict/bankroll \
+            --initial 50 --base-trade 5 --single-cap 100 --market-cap 200
+      - name: Show March results
+        if: always()
+        run: |
+          test ! -f march_strict/summary.json || python -m json.tool march_strict/summary.json
+          test ! -f march_strict/bankroll/bankroll_summary.json || python -m json.tool march_strict/bankroll/bankroll_summary.json
+      - name: Upload March strict replay
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: main-sequence-march-strict-coarse
+          path: march_strict/
+          if-no-files-found: warn
           retention-days: 14
 
   frozen-v1-external-robustness:
