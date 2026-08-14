@@ -84,6 +84,7 @@ def fills_probe(path: Path) -> dict:
         "keys": keys,
         "asset_ids": assets,
         "head": rows[:5],
+        "sample": rows,
     }
 
 
@@ -97,7 +98,7 @@ def rows_for_slug(path: Path, slug: str) -> dict:
         "key": key,
         "rows": int(len(x)),
         "columns": list(df.columns),
-        "records": json.loads(x.head(100).to_json(orient="records", date_format="iso")),
+        "records": json.loads(x.head(500).to_json(orient="records", date_format="iso")),
     }
 
 
@@ -110,6 +111,7 @@ def main() -> None:
         "markets": "markets/all.parquet",
         "resolutions": "resolutions/all.parquet",
         "book": "orderbooks/2026-03-14.parquet",
+        "trades": "trades/2026-03-14.parquet",
     }.items():
         p = dl(OB_REPO, OB_REV, rel); ob_paths[name] = p
         report["obadiaha"][name] = frame_probe(p, name)
@@ -151,11 +153,30 @@ def main() -> None:
             report["krish"].setdefault("json_probe_errors", {})[rel] = repr(exc)
 
     book_exact = report["obadiaha"]["book_exact_slug"]["records"]
+    trade_exact = report["obadiaha"]["trades_exact_slug"]["records"]
     book_tokens = sorted({str(r.get("token_id")) for r in book_exact if r.get("token_id") is not None})
+    fill_sample = report["krish"].get("fills", {}).get("sample", [])
     fill_assets = set()
-    for side in ("makerAssetId", "takerAssetId"):
-        fill_assets.update(report["krish"].get("fills", {}).get("asset_ids", {}).get(side, {}).keys())
-    fill_assets.discard("0")
+    for r in fill_sample:
+        for side in ("makerAssetId", "takerAssetId"):
+            if r.get(side) not in (None, "0", 0):
+                fill_assets.add(str(r[side]))
+
+    ob_by_tx = {}
+    for r in trade_exact:
+        tx = str(r.get("tx_hash") or "").lower()
+        if tx:
+            ob_by_tx.setdefault(tx, []).append(r)
+    kr_by_tx = {}
+    for r in fill_sample:
+        tx = str(r.get("transactionHash") or "").lower()
+        if tx:
+            kr_by_tx.setdefault(tx, []).append(r)
+    common_tx = sorted(set(ob_by_tx) & set(kr_by_tx))
+    tx_matches = []
+    for tx in common_tx[:20]:
+        tx_matches.append({"tx_hash": tx, "obadiaha": ob_by_tx[tx][:10], "krish": kr_by_tx[tx][:10]})
+
     report["cross_check"] = {
         "book_token_ids": book_tokens,
         "sample_fill_non_usdc_asset_ids": sorted(fill_assets),
@@ -163,7 +184,11 @@ def main() -> None:
         "official_token_outcomes_for_book_tokens": {
             t: report.get("official_clob", {}).get("token_outcomes", {}).get(t) for t in book_tokens
         },
+        "common_tx_count_in_samples": len(common_tx),
+        "tx_matches": tx_matches,
     }
+    # Keep artifact compact: raw 5k fill sample was only needed for the cross-check.
+    report["krish"]["fills"].pop("sample", None)
 
     (out / "mapping_audit.json").write_text(json.dumps(report, indent=2, default=str))
     print(json.dumps(report, indent=2, default=str), flush=True)
