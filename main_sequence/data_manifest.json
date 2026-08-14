@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "created_utc": "2026-08-15",
+  "policy": {
+    "strict_backtest": "Only sources with causal timestamps plus tape/full-depth evidence sufficient to grade fills may contribute executable PnL.",
+    "signal_robustness": "Snapshot-only or proxy-fill sources may validate signal direction but may not contribute strict executable PnL.",
+    "future_leak_gate": "Every feature observation timestamp must be <= decision timestamp. Settlement/outcome fields are forbidden from features, sizing, filtering, fitting, scaling, early stopping, and policy selection."
+  },
+  "sources": {
+    "kinzikdza_pm_microstructure": {
+      "repo_id": "kinzikdza/polymarket-updown-microstructure",
+      "repo_type": "dataset",
+      "revision": "26cadd348e84de2dbdb1e103afe55e1bd2b3f27c",
+      "classification": "strict_backtest",
+      "clean_start": "2026-05-27",
+      "clean_end": "2026-06-24",
+      "notes": "Existing frozen Main Sequence corpus. Earlier collection is excluded from strict results because of known resolution contamination."
+    },
+    "solal_crypto_updown": {
+      "repo_id": "Solal9/polymarket-crypto-updown-binary",
+      "repo_type": "dataset",
+      "revision": "c17800caa413042941bbd8a9f266b23b6f5f8ed4",
+      "classification": "candidate_pending_schema_and_gap_audit",
+      "notes": "BTC 15m/1h candidate. Raw timestamps and continuity must be audited before promotion."
+    },
+    "obadiaha_crypto_5m_15m": {
+      "repo_id": "obadiaha/polymarket-crypto-5m-15m",
+      "repo_type": "dataset",
+      "revision": "11793901f0ac89c5a6c51123a6ccd29a3aaf8f4c",
+      "classification": "candidate_robustness",
+      "notes": "Use dense audited slices only; do not infer continuity from dataset-level date labels."
+    },
+    "arena_capture": {
+      "repo_id": "Alezanello/polymarket-arena-capture",
+      "repo_type": "dataset",
+      "revision": "603094b4becdeccd700266050dca4035408418e5",
+      "classification": "candidate_pending_schema_and_tape_audit",
+      "notes": "Raw capture candidate for later-period cross-validation."
+    },
+    "vinayak_orderbooks": {
+      "repository": "Vinayak19112003/Polymarket-orderbooks",
+      "revision": "280a29b9b818cc742c096af81c62e4bf899d44dc",
+      "classification": "signal_robustness",
+      "notes": "Snapshot/proxy execution only. Never report its proxy fills as strict executable PnL."
+    },
+    "openmarket_unified": {
+      "repo_id": "openmarket/uie-event-20260212-20260515",
+      "sample_repo_id": "openmarket/uie-event-sample-20260228",
+      "repo_type": "dataset",
+      "revision": null,
+      "classification": "candidate_strict_pending_immutable_hf_sha",
+      "notes": "Promising event-level Polymarket/Binance source. Resolve and freeze exact HF commit SHA before any reported replay."
+    },
+    "brockmisner_crypto_derivatives": {
+      "repo_id": "BrockMisner/polymarket_crypto_derivatives",
+      "repo_type": "dataset",
+      "revision": null,
+      "classification": "manifest_only_pending_pin_and_sample_audit",
+      "notes": "Large historical archive. Inspect manifest and small slices before materializing the full corpus."
+    }
+  }
+}
