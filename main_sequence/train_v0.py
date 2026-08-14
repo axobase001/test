@@ -41,6 +41,17 @@ def bn_return(anchor: BinanceAnchor, ts_ms: int, seconds: int) -> float:
     return math.log(b / a)
 
 
+def bn_rv(anchor: BinanceAnchor, ts_ms: int, minutes: int, min_obs: int) -> float:
+    hi = int(np.searchsorted(anchor.close_times, int(ts_ms), side="right"))
+    lo = int(np.searchsorted(anchor.close_times, int(ts_ms) - minutes * 60_000, side="left"))
+    vals = anchor.log_returns[lo:hi]
+    vals = vals[np.isfinite(vals)]
+    if vals.size < min_obs:
+        return float("nan")
+    sig_1m = float(np.std(vals, ddof=1))
+    return sig_1m * math.sqrt(365 * 24 * 60)
+
+
 def safe_mid(bid: float, ask: float) -> float:
     if 0 < bid < ask < 1:
         return 0.5 * (bid + ask)
@@ -89,6 +100,7 @@ SEQ_NAMES = [
 
 
 def build_sequence(ctx, i: int) -> np.ndarray:
+    # Right-pad so pack_padded_sequence sees all real observations first.
     out = np.full((SEQ_LEN, len(SEQ_NAMES)), np.nan, dtype=np.float32)
     lo = max(0, i - SEQ_LEN + 1)
     idxs = list(range(lo, i + 1))
@@ -112,7 +124,7 @@ def build_sequence(ctx, i: int) -> np.ndarray:
             lr, float(ctx.s2c[j]) / 900.0, ymid, ysp,
         ])
     if rows:
-        out[-len(rows):] = np.asarray(rows, dtype=np.float32)
+        out[:len(rows)] = np.asarray(rows, dtype=np.float32)
     return out
 
 
@@ -166,7 +178,7 @@ def build_examples(pm_dir: Path, records_path: Path, bn: BinanceAnchor) -> list[
         ret1 = bn_return(bn, ts, 60)
         ret5 = bn_return(bn, ts, 300)
         ret15 = bn_return(bn, ts, 900)
-        rv15 = bn.rv_annualized(ts, 15)
+        rv15 = bn_rv(bn, ts, 15, min_obs=8)
         if not math.isfinite(rv15):
             rv15 = rv60
         vol_exp = rv15 / max(rv60, 1e-6)
@@ -276,7 +288,6 @@ class MainSequenceNet(nn.Module):
 
 
 def loss_fn(q, fill_logit, settle_logit, reward, fill, settle):
-    # Q is conditional-on-fill; only real tape corroborated actions supervise it.
     m = fill > 0.5
     if m.any():
         qloss = F.smooth_l1_loss(q[m], reward[m])
@@ -284,7 +295,7 @@ def loss_fn(q, fill_logit, settle_logit, reward, fill, settle):
         qloss = q.sum() * 0.0
     floss = F.binary_cross_entropy_with_logits(fill_logit, fill)
     sloss = F.binary_cross_entropy_with_logits(settle_logit, settle)
-    return qloss + 0.45 * floss + 0.20 * sloss, (float(qloss.detach()), float(floss.detach()), float(sloss.detach()))
+    return qloss + 0.45 * floss + 0.20 * sloss
 
 
 def train_one(seed: int, train_ex: list[Example], val_ex: list[Example], scaler: Scaler):
@@ -305,7 +316,7 @@ def train_one(seed: int, train_ex: list[Example], val_ex: list[Example], scaler:
         for seq, mask, stat, reward, fill, settle in loader:
             opt.zero_grad(set_to_none=True)
             q, fl, sl = model(seq, mask, stat)
-            loss, parts = loss_fn(q, fl, sl, reward, fill, settle)
+            loss = loss_fn(q, fl, sl, reward, fill, settle)
             loss.backward()
             nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             opt.step()
@@ -314,7 +325,7 @@ def train_one(seed: int, train_ex: list[Example], val_ex: list[Example], scaler:
         with torch.no_grad():
             seq, mask, stat, reward, fill, settle = next(iter(torch.utils.data.DataLoader(va, batch_size=len(va))))
             q, fl, sl = model(seq, mask, stat)
-            vl, parts = loss_fn(q, fl, sl, reward, fill, settle)
+            vl = loss_fn(q, fl, sl, reward, fill, settle)
             v = float(vl)
         history.append({"epoch": epoch + 1, "train": float(np.mean(losses)), "val": v})
         if v < best_val - 1e-5:
@@ -448,10 +459,7 @@ def main():
     model_metrics, model_rows = evaluate_policy(hold, qh, fph, "main_sequence_v0")
     base_metrics, base_rows = evaluate_policy(hold, qh, fph, "frozen_3c_fade", mode="baseline_fade")
     settle_y = [e.settle_yes for e in hold]
-    anchor_p = []
-    # records are aligned with examples; the static anchor_mean sits at index 3 before scaling.
-    for e in hold:
-        anchor_p.append(float(e.static[3]))
+    anchor_p = [float(e.static[3]) for e in hold]
     summary = {
         "name": "Main Sequence v0",
         "architecture": "GRU(32) PM-book sequence + static cross-market features; heads: conditional Q(fade/follow), fill probability, settlement probability",
