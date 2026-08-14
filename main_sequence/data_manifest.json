@@ -1,5 +1,5 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "created_utc": "2026-08-15",
   "policy": {
     "strict_backtest": "Only sources with causal timestamps plus tape/full-depth evidence sufficient to grade fills may contribute executable PnL.",
@@ -31,17 +31,18 @@
       "repo_id": "obadiaha/polymarket-crypto-5m-15m",
       "repo_type": "dataset",
       "revision": "11793901f0ac89c5a6c51123a6ccd29a3aaf8f4c",
-      "classification": "candidate_strict_coarse_book_pending_trade_schema",
-      "probe_paths": ["orderbooks/2026-03-14.parquet", "trades/2026-03-14.parquet"],
-      "notes": "Sparse January files are not treated as usable coverage. Dense March orderbooks plus trade files are being audited. Any strict promotion must account for the approximately 10-second book cadence."
+      "classification": "candidate_strict_coarse_book_plus_onchain_tape",
+      "probe_paths": ["markets/all.parquet", "resolutions/all.parquet", "orderbooks/2026-03-14.parquet", "trades/2026-03-14.parquet"],
+      "forbidden_feature_columns": ["resolved_at", "outcome"],
+      "notes": "Sparse January files are not treated as usable coverage. Dense March orderbooks are approximately 10-second snapshots. Resolutions are labels/settlement only. Strict promotion requires token-to-outcome mapping plus independent on-chain fill confirmation."
     },
     "arena_capture": {
       "repo_id": "Alezanello/polymarket-arena-capture",
       "repo_type": "dataset",
       "revision": "603094b4becdeccd700266050dca4035408418e5",
-      "classification": "candidate_strict_pending_trade_schema",
+      "classification": "candidate_strict_native_book_trade_tape",
       "probe_paths": ["cap_book.parquet", "cap_trades.parquet"],
-      "notes": "Raw capture candidate for later-period cross-validation."
+      "notes": "Native book/trade capture has asset_id plus explicit Up/Down outcome and is a strong later-period execution cross-check."
     },
     "vinayak_orderbooks": {
       "repository": "Vinayak19112003/Polymarket-orderbooks",
@@ -55,23 +56,27 @@
       "revision": "74502466d1a7cef56395bfd8d0b465fbebc849cf",
       "classification": "candidate_strict_signal_plus_external_tape",
       "probe_paths": ["polymarket_ticks_ms.parquet", "binance_ticks_ms.parquet", "market_meta.parquet", "lag_pairs_ms.parquet"],
-      "notes": "Archived v0.4.3-unified / source tag v0.5.2. Use as synchronized signal/order-book-event layer. Do not use top-of-book alone to assert executable fills; pair with independent on-chain tape where dates overlap."
+      "notes": "Archived v0.4.3-unified / source tag v0.5.2. Use as synchronized signal/event layer. Known unrecoverable 2026-04-22 through 2026-05-12 gap. Do not use top-of-book alone to assert executable fills."
     },
     "krish_v1_onchain_fills": {
       "repo_id": "krish301/polymarket-crypto-trades-v1",
       "repo_type": "dataset",
-      "revision": null,
-      "discover_revision_only": true,
-      "classification": "candidate_strict_execution_ground_truth_pending_pin",
-      "notes": "BTC15m v1-era raw OrderFilled ground truth, 2026-03-01 through 2026-04-28. Resolve current HF SHA in audit, then pin before use. Settlement metadata may label outcomes only after decisions and is never a decision feature."
+      "revision": "f3bfb79f19611ea3115ad29c18720166ee6dd0b5",
+      "classification": "strict_execution_ground_truth",
+      "probe_paths": [
+        "data/raw/trades/btc/15m/_manifest.json",
+        "data/raw/metadata/btc/15m/14-03-2026/00-00-00-UTC/metadata.json",
+        "data/raw/trades/btc/15m/14-03-2026/00-00-00-UTC/fills.jsonl.gz"
+      ],
+      "forbidden_feature_keys": ["finalPrice", "outcomePrices", "winner", "closed"],
+      "notes": "Pinned v1 OrderFilled ground truth, BTC15m coverage 2026-03-01 through 2026-04-28. Download only candidate windows. Metadata may map token IDs before trading; any post-close resolution fields are forbidden from signal construction."
     },
     "brockmisner_crypto_derivatives": {
       "repo_id": "BrockMisner/polymarket_crypto_derivatives",
       "repo_type": "dataset",
-      "revision": null,
-      "discover_revision_only": true,
-      "classification": "manifest_only_pending_pin_and_sample_audit",
-      "notes": "Large historical archive. Resolve immutable HEAD, inspect manifest and small slices before materializing the full corpus."
+      "revision": "ec37184fcc76a92045bb0a72afad0be6c626487c",
+      "classification": "manifest_only_pinned_pending_sample_audit",
+      "notes": "Large historical archive pinned before use. Inspect manifest and small slices before materializing the full corpus."
     }
   }
 }
