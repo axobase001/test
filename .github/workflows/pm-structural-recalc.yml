@@ -1,0 +1,70 @@
+name: pm-structural-recalc
+
+on:
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'pm_structural/**'
+      - '.github/workflows/pm-structural-recalc.yml'
+
+permissions:
+  contents: read
+
+env:
+  PYTHONUNBUFFERED: '1'
+  HF_HUB_DISABLE_TELEMETRY: '1'
+
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install audited replay stack
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install 'honest-backtest[parquet]==0.2.0' huggingface_hub requests scipy pandas pyarrow numpy
+
+      - name: Download public Polymarket microstructure corpus
+        run: |
+          python - <<'PY'
+          from huggingface_hub import snapshot_download
+          snapshot_download(
+              repo_id='kinzikdza/polymarket-updown-microstructure',
+              repo_type='dataset',
+              local_dir='pm_data',
+              allow_patterns=['parquet/*'],
+          )
+          PY
+          ls -lh pm_data/parquet
+
+      - name: Run causal structural-mispricing replay
+        run: |
+          python pm_structural/recalc.py \
+            --pm-dir pm_data/parquet \
+            --out results \
+            --cache cache \
+            --start 2026-05-27 \
+            --end 2026-06-24
+
+      - name: Show compact result
+        if: always()
+        run: |
+          if [ -f results/SUMMARY.md ]; then cat results/SUMMARY.md; fi
+          if [ -f results/summary.json ]; then python -m json.tool results/summary.json | head -n 250; fi
+
+      - name: Upload result artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pm-structural-recalc-results
+          path: |
+            results/
+            cache/deribit_trades.parquet
+          if-no-files-found: warn
+          retention-days: 7
