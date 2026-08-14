@@ -65,6 +65,13 @@ def load_fills(fills_path: Path, records_path: Path | None) -> pd.DataFrame:
     fills["cost"] = pd.to_numeric(fills["cost"], errors="raise").astype(float)
     fills["real_reward"] = pd.to_numeric(fills["real_reward"], errors="raise").astype(float)
 
+    if "capacity_usd" in fills.columns:
+        fills["capacity_usd"] = pd.to_numeric(fills["capacity_usd"], errors="raise").astype(float)
+        if (~np.isfinite(fills["capacity_usd"])).any() or (fills["capacity_usd"] < 0).any():
+            raise ValueError("capacity_usd must be finite and non-negative when supplied")
+    else:
+        fills["capacity_usd"] = math.inf
+
     if "close_ts_ms" in fills.columns:
         fills["close_ts_ms"] = pd.to_numeric(fills["close_ts_ms"], errors="raise").astype(np.int64)
     elif "close_ts" in fills.columns:
@@ -108,7 +115,7 @@ def replay(fills: pd.DataFrame, initial_capital: float = 50.0, base_trade: float
     cash = float(initial_capital)
     active: list[Position] = []
     trade_rows, curve = [], []
-    skipped_cash = skipped_market_cap = 0
+    skipped_cash = skipped_market_cap = skipped_capacity = 0
     max_locked = max_market_seen = 0.0
     first_ts = int(fills["ts_ms"].min()) if len(fills) else None
     last_ts = first_ts
@@ -154,8 +161,11 @@ def replay(fills: pd.DataFrame, initial_capital: float = 50.0, base_trade: float
         eq = known_equity()
         stake = target_stake(eq, initial_capital, base_trade, single_cap)
         cid = str(r.cid); mexp = market_exposure(cid)
+        capacity = float(r.capacity_usd)
         reason = None
-        if mexp + stake > market_cap + 1e-9:
+        if stake > capacity + 1e-9:
+            skipped_capacity += 1; reason = "capacity"
+        elif mexp + stake > market_cap + 1e-9:
             skipped_market_cap += 1; reason = "market_cap"
         elif cash + 1e-9 < stake:
             skipped_cash += 1; reason = "cash"
@@ -163,7 +173,7 @@ def replay(fills: pd.DataFrame, initial_capital: float = 50.0, base_trade: float
             trade_rows.append({"source_row": int(idx), "ts_ms": ts, "close_ts_ms": int(r.close_ts_ms),
                                "cid": cid, "action": str(r.action), "status": f"skipped_{reason}",
                                "known_equity_before": eq, "cash_before": cash, "target_stake": stake,
-                               "stake": 0.0, "cost_per_share": float(r.cost),
+                               "capacity_usd": capacity, "stake": 0.0, "cost_per_share": float(r.cost),
                                "payout_per_share": float(r.payout_per_share), "shares": 0.0,
                                "payout": 0.0, "pnl": 0.0})
             mark(ts, f"skip_{reason}"); continue
@@ -174,7 +184,7 @@ def replay(fills: pd.DataFrame, initial_capital: float = 50.0, base_trade: float
         trade_rows.append({"source_row": int(idx), "ts_ms": ts, "close_ts_ms": p.close_ts_ms,
                            "cid": cid, "action": p.action, "status": "taken",
                            "known_equity_before": eq, "cash_before": cash_before, "target_stake": stake,
-                           "stake": p.stake, "cost_per_share": p.cost_per_share,
+                           "capacity_usd": capacity, "stake": p.stake, "cost_per_share": p.cost_per_share,
                            "payout_per_share": p.payout_per_share, "shares": p.shares,
                            "payout": p.payout, "pnl": p.pnl})
         mark(ts, "open")
@@ -201,12 +211,14 @@ def replay(fills: pd.DataFrame, initial_capital: float = 50.0, base_trade: float
         "wins": int((taken["payout_per_share"] > 0.5).sum()) if len(taken) else 0,
         "losses": int((taken["payout_per_share"] < 0.5).sum()) if len(taken) else 0,
         "skipped_cash": int(skipped_cash), "skipped_market_cap": int(skipped_market_cap),
+        "skipped_capacity": int(skipped_capacity),
         "max_locked_cost": float(max_locked), "max_single_market_exposure": float(max_market_seen),
         "stake_counts": tier_counts,
         "rules": {"initial_capital": float(initial_capital), "base_trade": float(base_trade),
                   "double_on_each_equity_multiple_of_2": True, "single_trade_cap": float(single_cap),
                   "single_market_window_exposure_cap": float(market_cap), "leverage": False,
-                  "partial_fill_for_cash_or_cap": False,
+                  "partial_fill_for_cash_or_cap": False, "partial_fill_for_capacity": False,
+                  "capacity_gate": "when capacity_usd is supplied, target stake must fit fully inside audited executable capacity",
                   "equity_for_sizing": "cash + unsettled positions at cost basis; only settled PnL changes tier"},
     }
     return summary, trades_df, curve_df
