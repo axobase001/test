@@ -56,7 +56,7 @@ jobs:
 
       - name: Train Main Sequence v0
         run: |
-          python main_sequence/train_v0.py \
+          PYTHONPATH=. python main_sequence/train_v0.py \
             --pm-dir pm_data/parquet \
             --records prior/results/records_structural_03c.csv \
             --prior-summary prior/results/summary.json \
