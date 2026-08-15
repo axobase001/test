@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 # Final pre-July release guard. Statistical/data preprocessing semantics are
-# inherited from `prejuly_5m_official_final`; this file only enforces transport
-# completeness. A theoretical 5m slot is allowed to be absent only when the
-# independent Gamma /events index confirms that no exact market/event existed.
+# inherited from `prejuly_5m_official_final`; this file enforces transport
+# completeness and freezes the evaluation comparator before July is requested.
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import json
+from pathlib import Path
+import sys
 
+import numpy as np
+import pandas as pd
 import requests
 
 import prejuly_5m_official as core
@@ -14,6 +18,69 @@ import prejuly_5m_official_final  # applies corrected size/order + finance-ancho
 import prejuly_5m_official_stream as stream
 
 _original_fetch_phase_stream = stream.fetch_phase_stream
+_original_probability_summary = core.probability_summary
+_original_day_bootstrap = core.paired_day_bootstrap
+
+EVALUATION_CONTRACT = {
+    "primary_probability_comparator": "finance_p hard anchor",
+    "primary_probability_gate": (
+        "GREEN iff model Brier is lower than finance_p and the 95% day-block bootstrap CI for "
+        "Brier(finance_p)-Brier(model) has lower bound > 0; RED iff aggregate Brier gain vs finance_p <= 0; "
+        "otherwise YELLOW."
+    ),
+    "secondary_probability_comparator": "PM last pre-decision trade; descriptive/secondary, never allowed to override the finance-anchor primary gate.",
+    "execution_role": "5-second public taker-BUY tape proxy is confirmatory tradeability evidence only; it cannot rescue a RED primary probability gate.",
+    "freeze_timing": "Declared before any July 1-14 market/trade/Binance test data is requested.",
+}
+
+
+def probability_summary_with_finance_gate(xs, p):
+    out = _original_probability_summary(xs, p)
+    out["brier_gain_vs_finance"] = float(out["brier_finance"] - out["brier_model"])
+    out["logloss_gain_vs_finance"] = float(out["logloss_finance"] - out["logloss_model"])
+    out["primary_comparator"] = "finance_p"
+    return out
+
+
+def paired_day_bootstrap_with_finance(xs, p, reps=5000, seed=20260815):
+    # Preserve the pre-existing PM-last day bootstrap and add the hard-anchor comparator.
+    pm_out = _original_day_bootstrap(xs, p, reps=reps, seed=seed)
+    y = np.asarray([e.label for e in xs], dtype=float)
+    pp = np.asarray(p, dtype=float)
+    fi = core.FEATURES.index("finance_p")
+    finance = np.asarray([float(e.x[fi]) for e in xs], dtype=float)
+    days = np.asarray([
+        pd.Timestamp(e.start, unit="s", tz="UTC").strftime("%Y-%m-%d") for e in xs
+    ])
+    vals = []
+    for d in sorted(set(days)):
+        m = days == d
+        vals.append(float(np.mean((y[m] - finance[m]) ** 2 - (y[m] - pp[m]) ** 2)))
+    vals = np.asarray(vals, dtype=float)
+    rng = np.random.default_rng(seed)
+    z = np.empty(reps, dtype=float)
+    for i in range(reps):
+        z[i] = rng.choice(vals, len(vals), replace=True).mean()
+    fin_out = {
+        "day_mean_gain": float(vals.mean()),
+        "ci95": [float(np.quantile(z, .025)), float(np.quantile(z, .975))],
+        "days": int(len(vals)),
+    }
+    out = dict(pm_out)
+    out["vs_pm_last"] = {
+        "day_mean_gain": pm_out["day_mean_gain"],
+        "ci95": pm_out["ci95"],
+        "days": pm_out["days"],
+    }
+    out["vs_finance"] = fin_out
+    out["primary_comparator"] = "finance_p"
+    return out
+
+
+# Freeze evaluation semantics before train/validation, so the same functions are
+# serialized in the June artifact and later reused by the sealed July job.
+core.probability_summary = probability_summary_with_finance_gate
+core.paired_day_bootstrap = paired_day_bootstrap_with_finance
 
 
 def _gamma_census_hour(hour_start: int):
@@ -183,5 +250,69 @@ def fetch_phase_stream_complete(start: str, end: str, workers: int = 20):
 
 stream.fetch_phase_stream = fetch_phase_stream_complete
 
+
+def _arg_after(flag: str) -> Path | None:
+    try:
+        return Path(sys.argv[sys.argv.index(flag) + 1])
+    except (ValueError, IndexError):
+        return None
+
+
+def _stamp_train_contract(out: Path):
+    cp = out / "FROZEN_CONTRACT.json"
+    sp = out / "train_summary.json"
+    if not cp.exists():
+        raise RuntimeError("frozen contract missing after train")
+    contract = json.loads(cp.read_text())
+    contract["evaluation_contract"] = EVALUATION_CONTRACT
+    cp.write_text(json.dumps(contract, indent=2))
+    if sp.exists():
+        summary = json.loads(sp.read_text())
+        summary["contract"] = contract
+        summary["evaluation_contract"] = EVALUATION_CONTRACT
+        sp.write_text(json.dumps(summary, indent=2))
+    print("EVALUATION_CONTRACT_FROZEN", json.dumps(EVALUATION_CONTRACT, ensure_ascii=False), flush=True)
+
+
+def _stamp_test_verdict(out: Path, model_dir: Path):
+    sp = out / "test_summary.json"
+    cp = model_dir / "FROZEN_CONTRACT.json"
+    if not sp.exists() or not cp.exists():
+        return
+    summary = json.loads(sp.read_text())
+    contract = json.loads(cp.read_text())
+    ec = contract.get("evaluation_contract")
+    if ec != EVALUATION_CONTRACT:
+        raise RuntimeError("sealed evaluation contract mismatch")
+    prob = summary["probability"]
+    boot = summary["brier_gain_day_bootstrap"]["vs_finance"]
+    gain = float(prob["brier_gain_vs_finance"])
+    lower = float(boot["ci95"][0])
+    if gain <= 0:
+        verdict = "RED"
+    elif lower > 0:
+        verdict = "GREEN"
+    else:
+        verdict = "YELLOW"
+    summary["evaluation_contract"] = ec
+    summary["predeclared_primary_probability_verdict"] = {
+        "verdict": verdict,
+        "brier_gain_vs_finance": gain,
+        "day_bootstrap_vs_finance": boot,
+    }
+    sp.write_text(json.dumps(summary, indent=2))
+    print("PREDECLARED_PRIMARY_PROBABILITY_VERDICT", verdict, "gain", gain, "ci95", boot["ci95"], flush=True)
+
+
 if __name__ == "__main__":
+    phase = sys.argv[1] if len(sys.argv) > 1 else None
     stream.main()
+    if phase == "train":
+        out = _arg_after("--out")
+        if out is not None:
+            _stamp_train_contract(out)
+    elif phase == "test":
+        out = _arg_after("--out")
+        model_dir = _arg_after("--model-dir")
+        if out is not None and model_dir is not None:
+            _stamp_test_verdict(out, model_dir)
