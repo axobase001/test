@@ -1,0 +1,3 @@
+https://huggingface.co/datasets/kinzikdza/polymarket-updown-microstructure/resolve/main/parquet/slots.parquet?download=true&cb=1786690000
+https://huggingface.co/datasets/kinzikdza/polymarket-updown-microstructure/resolve/main/parquet/book_snapshots.parquet?download=true&cb=1786690000
+https://huggingface.co/datasets/kinzikdza/polymarket-updown-microstructure/resolve/main/parquet/pm_trades.parquet?download=true&cb=1786690000

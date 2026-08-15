@@ -1,0 +1,80 @@
+name: pm-structural-recalc
+
+on:
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'pm_structural/**'
+      - '.github/workflows/pm-structural-recalc.yml'
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  PYTHONUNBUFFERED: '1'
+  HF_HUB_DISABLE_TELEMETRY: '1'
+
+jobs:
+  regime-matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install audited replay stack
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install 'honest-backtest[parquet]==0.2.0' huggingface_hub requests scipy pandas pyarrow numpy
+
+      - name: Download pinned Polymarket microstructure corpus
+        run: |
+          python - <<'PY'
+          from huggingface_hub import snapshot_download
+          snapshot_download(
+              repo_id='kinzikdza/polymarket-updown-microstructure',
+              repo_type='dataset',
+              revision='26cadd348e84de2dbdb1e103afe55e1bd2b3f27c',
+              local_dir='pm_data',
+              allow_patterns=['parquet/*'],
+          )
+          PY
+
+      - name: Download frozen 3c replay artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p prior
+          gh run download 31771161358 -n pm-structural-recalc-results -D prior
+          test -f prior/results/records_structural_03c.csv
+          test -f prior/results/summary.json
+          ls -lh prior/results/records_structural_03c.csv prior/results/summary.json
+
+      - name: Run frozen 3c regime matrix
+        run: |
+          python pm_structural/regime_matrix.py \
+            --pm-dir pm_data/parquet \
+            --records prior/results/records_structural_03c.csv \
+            --prior-summary prior/results/summary.json \
+            --out regime_results \
+            --cache cache_regime \
+            --start 2026-05-27 \
+            --end 2026-06-24
+
+      - name: Show regime result
+        if: always()
+        run: |
+          if [ -f regime_results/REGIME_SUMMARY.md ]; then cat regime_results/REGIME_SUMMARY.md; fi
+
+      - name: Upload regime artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pm-structural-regime-matrix
+          path: regime_results/
+          if-no-files-found: warn
+          retention-days: 7

@@ -1,0 +1,51 @@
+name: main-sequence-extended
+
+on:
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'main_sequence/extended_solal.py'
+      - '.github/workflows/main-sequence-extended.yml'
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  PYTHONUNBUFFERED: '1'
+  HF_HUB_DISABLE_TELEMETRY: '1'
+
+jobs:
+  extended-solal:
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install replay stack
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --index-url https://download.pytorch.org/whl/cpu torch
+          python -m pip install 'honest-backtest[parquet]==0.2.0' huggingface_hub requests scipy pandas pyarrow numpy
+
+      - name: Run pinned causal extended replay
+        run: |
+          PYTHONPATH=. python main_sequence/extended_solal.py --out extended_results --cache extended_cache
+
+      - name: Show result
+        if: always()
+        run: |
+          if [ -f extended_results/SUMMARY.md ]; then cat extended_results/SUMMARY.md; fi
+
+      - name: Upload result artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: main-sequence-extended-results
+          path: extended_results/
+          if-no-files-found: warn
+          retention-days: 7

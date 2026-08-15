@@ -1,0 +1,37 @@
+name: main-sequence-pmxt-probe
+
+on:
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'main_sequence/pmxt_probe.py'
+      - 'main_sequence/clob_history_probe.py'
+      - 'main_sequence/data_api_speed_probe.py'
+      - 'main_sequence/data_api_split_probe.py'
+      - 'main_sequence/data_api_slot_probe.py'
+      - '.github/workflows/main-sequence-pmxt-probe.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install probe stack
+        run: python -m pip install duckdb requests
+      - name: Probe one pmxt hour
+        run: python main_sequence/pmxt_probe.py
+      - name: Probe official CLOB historical endpoints on June only
+        run: python main_sequence/clob_history_probe.py
+      - name: Measure official Data API throughput on June only
+        run: python main_sequence/data_api_speed_probe.py
+      - name: Measure recursive Data API split throughput on June only
+        run: python main_sequence/data_api_split_probe.py
+      - name: Probe exact T-120 to T+5 slotwise retrieval on June only
+        run: python main_sequence/data_api_slot_probe.py
