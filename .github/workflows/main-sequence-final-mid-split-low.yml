@@ -1,0 +1,62 @@
+name: main-sequence-final-mid-split-low
+
+on:
+  pull_request:
+    branches: [ main-sequence-final-recent-20260815 ]
+    paths:
+      - '.github/workflows/main-sequence-final-mid-split-low.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  PYTHONUNBUFFERED: '1'
+  PYTHONPATH: '.'
+
+jobs:
+  score:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shard: feb_a
+            start: '2026-02-01'
+            end: '2026-02-15'
+          - shard: feb_b
+            start: '2026-02-15'
+            end: '2026-03-01'
+          - shard: mar_a
+            start: '2026-03-01'
+            end: '2026-03-16'
+          - shard: mar_b
+            start: '2026-03-16'
+            end: '2026-04-01'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install stack
+        run: python -m pip install 'honest-backtest[parquet]==0.2.0' requests scipy pandas pyarrow numpy
+      - name: Score frozen causal shard at low concurrency
+        run: |
+          python main_sequence/final_recent_replay.py score \
+            --start '${{ matrix.start }}' \
+            --end '${{ matrix.end }}' \
+            --shard '${{ matrix.shard }}' \
+            --out 'split_${{ matrix.shard }}' \
+            --workers 4
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: main-sequence-final-mid-split-${{ matrix.shard }}
+          path: |
+            split_${{ matrix.shard }}/dual_exit_records.csv
+            split_${{ matrix.shard }}/market_inventory.csv
+            split_${{ matrix.shard }}/summary.json
+          if-no-files-found: warn
+          retention-days: 14
