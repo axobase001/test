@@ -1,0 +1,149 @@
+name: main-sequence-original-93d-tape
+
+on:
+  pull_request:
+    branches: [ main-sequence-long-replay-20260815, main ]
+    paths:
+      - 'pm_structural/recalc.py'
+      - 'main_sequence/original_93d_tape_replay.py'
+      - '.github/workflows/main-sequence-original-93d-tape.yml'
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  PYTHONUNBUFFERED: '1'
+
+jobs:
+  freeze-anchors:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install audited stack
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install 'honest-backtest[parquet]==0.2.0' requests scipy pandas pyarrow numpy
+      - name: Syntax gate
+        run: python -m py_compile main_sequence/original_93d_tape_replay.py pm_structural/recalc.py
+      - name: Freeze original finance anchors and contract
+        run: python main_sequence/original_93d_tape_replay.py anchors --out original93_anchors
+      - name: Show frozen contract
+        if: always()
+        run: test ! -f original93_anchors/FROZEN_CONTRACT.json || cat original93_anchors/FROZEN_CONTRACT.json
+      - name: Upload frozen anchors
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: main-sequence-original-93d-anchors
+          path: |
+            original93_anchors/FROZEN_CONTRACT.json
+            original93_anchors/binance_1m.parquet
+            original93_anchors/deribit_anchor.parquet
+            original93_anchors/selected_deribit_instruments.txt
+          if-no-files-found: error
+          retention-days: 14
+
+  score:
+    needs: freeze-anchors
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shard: mar
+            start: '2026-03-01'
+            end: '2026-04-01'
+          - shard: apr
+            start: '2026-04-01'
+            end: '2026-05-01'
+          - shard: may
+            start: '2026-05-01'
+            end: '2026-06-01'
+          - shard: jun1
+            start: '2026-06-01'
+            end: '2026-06-02'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install audited stack
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install 'honest-backtest[parquet]==0.2.0' requests scipy pandas pyarrow numpy
+      - name: Download frozen anchors
+        uses: actions/download-artifact@v4
+        with:
+          name: main-sequence-original-93d-anchors
+          path: frozen_original
+      - name: Verify frozen contract before opening shard
+        run: |
+          python - <<'PY'
+          import json
+          p=json.load(open('frozen_original/FROZEN_CONTRACT.json'))
+          assert p['period']==['2026-03-01','2026-06-02']
+          assert p['days']==93
+          assert p['asset']=='BTC' and p['timeframe']=='15m'
+          assert p['threshold']==0.03 and p['size_shares']==5.0
+          assert p['decision_window_s2c']==[60,600]
+          assert p['fee_rate']==0.07 and p['once_per_market'] is True
+          assert 'decision-second witness is never counted' in p['execution']
+          print('ORIGINAL_93D_CONTRACT_OK')
+          PY
+      - name: Score frozen original policy on official tape
+        run: |
+          python main_sequence/original_93d_tape_replay.py score \
+            --model-dir frozen_original \
+            --out "original93_${{ matrix.shard }}" \
+            --start "${{ matrix.start }}" \
+            --end "${{ matrix.end }}" \
+            --shard "${{ matrix.shard }}"
+      - name: Show shard result
+        if: always()
+        run: test ! -f "original93_${{ matrix.shard }}/summary.json" || cat "original93_${{ matrix.shard }}/summary.json"
+      - name: Upload shard
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: main-sequence-original-93d-${{ matrix.shard }}
+          path: original93_${{ matrix.shard }}/
+          if-no-files-found: warn
+          retention-days: 14
+
+  aggregate:
+    needs: score
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install analysis stack
+        run: python -m pip install 'honest-backtest[parquet]==0.2.0' requests scipy pandas pyarrow numpy
+      - name: Download score shards
+        uses: actions/download-artifact@v4
+        with:
+          pattern: main-sequence-original-93d-*
+          path: original93_shards
+      - name: Aggregate exact 93-day statistics
+        run: python main_sequence/original_93d_tape_replay.py aggregate --root original93_shards --out original93_aggregate
+      - name: Show final result
+        if: always()
+        run: |
+          test ! -f original93_aggregate/SUMMARY.md || cat original93_aggregate/SUMMARY.md
+          test ! -f original93_aggregate/summary.json || cat original93_aggregate/summary.json
+      - name: Upload final aggregate
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: main-sequence-original-93d-aggregate
+          path: original93_aggregate/
+          if-no-files-found: warn
+          retention-days: 14
