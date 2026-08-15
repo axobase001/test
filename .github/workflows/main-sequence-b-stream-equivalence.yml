@@ -8,7 +8,7 @@ on:
       - 'main_sequence/prejuly_5m_official_retryfix.py'
       - 'main_sequence/prejuly_5m_official_sealed.py'
       - 'main_sequence/prejuly_5m_official_stream.py'
-      - 'main_sequence/prejuly_5m_raw_query_probe.py'
+      - 'main_sequence/prejuly_5m_official_final.py'
       - '.github/workflows/main-sequence-b-stream-equivalence.yml'
 
 permissions:
@@ -32,6 +32,6 @@ jobs:
           python -m pip install --index-url https://download.pytorch.org/whl/cpu torch
           python -m pip install numpy pandas scipy requests
       - name: Syntax
-        run: python -m py_compile main_sequence/prejuly_5m_raw_query_probe.py
-      - name: Probe raw Data API query-shape determinism on June only
-        run: python main_sequence/prejuly_5m_raw_query_probe.py
+        run: python -m py_compile main_sequence/prejuly_5m_official_final.py
+      - name: Prove corrected stream equals corrected full-fetch baseline on June hour
+        run: python main_sequence/prejuly_5m_official_final.py equiv
