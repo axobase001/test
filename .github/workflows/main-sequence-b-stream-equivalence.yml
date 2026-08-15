@@ -8,6 +8,7 @@ on:
       - 'main_sequence/prejuly_5m_official_retryfix.py'
       - 'main_sequence/prejuly_5m_official_sealed.py'
       - 'main_sequence/prejuly_5m_official_stream.py'
+      - 'main_sequence/prejuly_5m_official_stream_equiv.py'
       - '.github/workflows/main-sequence-b-stream-equivalence.yml'
 
 permissions:
@@ -31,6 +32,8 @@ jobs:
           python -m pip install --index-url https://download.pytorch.org/whl/cpu torch
           python -m pip install numpy pandas scipy requests
       - name: Syntax
-        run: python -m py_compile main_sequence/prejuly_5m_official_stream.py
+        run: |
+          python -m py_compile main_sequence/prejuly_5m_official_stream.py
+          python -m py_compile main_sequence/prejuly_5m_official_stream_equiv.py
       - name: Prove stream transport equals full fetch on June hour
-        run: python main_sequence/prejuly_5m_official_stream.py equiv
+        run: python main_sequence/prejuly_5m_official_stream_equiv.py equiv
