@@ -9,7 +9,7 @@ permissions:
 
 concurrency:
   group: main-sequence-final-v3-no-lookahead-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 env:
   PYTHONUNBUFFERED: "1"
@@ -35,13 +35,12 @@ jobs:
           path: final_v3_protocol/FROZEN_FINAL_RECENT_PROTOCOL.json
           retention-days: 14
 
-  # Production decision first: exact 2026-05-15 -> 2026-08-15 window.
   latest-3m:
     needs: freeze-protocol
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
-      max-parallel: 6
+      max-parallel: 2
       matrix:
         include:
           - { shard: may_b, start: "2026-05-15", end: "2026-06-01" }
@@ -76,13 +75,12 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-  # Remaining calendar history needed for 6m / 9m / 12m windows.
   historical-tail:
     needs: freeze-protocol
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
-      max-parallel: 5
+      max-parallel: 2
       matrix:
         include:
           - { shard: aug15_2025, start: "2025-08-15", end: "2025-09-01" }
