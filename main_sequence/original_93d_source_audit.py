@@ -10,6 +10,7 @@ from huggingface_hub import HfApi, HfFileSystem
 
 OUT = Path("original_93d_source_audit")
 OUT.mkdir(exist_ok=True)
+AUDIT_PATH = OUT / "audit.json"
 api = HfApi()
 fs = HfFileSystem()
 
@@ -29,10 +30,22 @@ def ts_iso(v, unit="s"):
         return str(v)
 
 
+def persist(result: dict) -> None:
+    AUDIT_PATH.write_text(json.dumps(result, indent=2, default=str))
+
+
+def safe(name: str, fn, result: dict):
+    print("AUDIT_CANDIDATE", name, flush=True)
+    try:
+        result[name] = fn()
+    except Exception as exc:
+        result[name] = {"error": repr(exc)}
+        print("AUDIT_CANDIDATE_UNAVAILABLE", name, repr(exc), flush=True)
+    persist(result)
+
+
 def parquet_footer(repo: str, rev: str, path: str, ts_col: str, unit: str):
     full = f"datasets/{repo}@{rev}/{path}"
-    # HfFileSystem supports random access, so ParquetFile normally reads only the footer
-    # and row-group metadata rather than materializing the whole object.
     with fs.open(full, "rb") as fh:
         pf = pq.ParquetFile(fh)
         md = pf.metadata
@@ -73,24 +86,46 @@ def audit_aliplayer():
     info = api.dataset_info(repo)
     rev = info.sha
     files = api.list_repo_files(repo, revision=rev, repo_type="dataset")
-    wanted = {
-        "orderbook": ("data/orderbook/crypto=BTC/timeframe=15-minute/part-0.parquet", "ts_ms", "ms"),
-        "ticks": ("data/ticks/crypto=BTC/timeframe=15-minute/part-0.parquet", "timestamp_ms", "ms"),
-        "prices": ("data/prices/crypto=BTC/timeframe=15-minute/part-0.parquet", "timestamp", "s"),
-        "markets": ("data/markets.parquet", "end_ts", "s"),
+    # Layout can drift. Capture matching paths first; then inspect plausible one-file subsets.
+    prefixes = {
+        "orderbook": "data/orderbook/crypto=BTC/timeframe=15-minute/",
+        "ticks": "data/ticks/crypto=BTC/timeframe=15-minute/",
+        "prices": "data/prices/crypto=BTC/timeframe=15-minute/",
     }
     out = {"repo": repo, "revision": rev, "total_files": len(files), "objects": {}}
-    for k, (path, col, unit) in wanted.items():
-        if path not in files:
-            # Preserve actual matching paths to catch naming/layout drift.
-            stem = path.rsplit("/", 1)[0]
-            out["objects"][k] = {"missing_expected_path": path,
-                                 "matches": [x for x in files if x.startswith(stem)][:20]}
-        else:
-            try:
-                out["objects"][k] = parquet_footer(repo, rev, path, col, unit)
-            except Exception as exc:
-                out["objects"][k] = {"path": path, "error": repr(exc)}
+    col_guesses = {
+        "orderbook": [("ts_ms", "ms"), ("timestamp_ms", "ms"), ("timestamp", "s")],
+        "ticks": [("timestamp_ms", "ms"), ("ts_ms", "ms"), ("timestamp", "s")],
+        "prices": [("timestamp", "s"), ("timestamp_ms", "ms"), ("ts_ms", "ms")],
+    }
+    for kind, prefix in prefixes.items():
+        matches = sorted(x for x in files if x.startswith(prefix) and x.endswith(".parquet"))
+        rec = {"matches": matches[:100], "match_count": len(matches), "footers": []}
+        # Inspect every shard footer when the subset is reasonably sharded. Footer-only access.
+        for path in matches:
+            done = None
+            for col, unit in col_guesses[kind]:
+                try:
+                    z = parquet_footer(repo, rev, path, col, unit)
+                    if not z.get("error"):
+                        done = z
+                        break
+                    if done is None:
+                        done = z
+                except Exception as exc:
+                    done = {"path": path, "error": repr(exc)}
+            rec["footers"].append(done)
+        los = [x.get("min_raw") for x in rec["footers"] if x and x.get("min_raw") is not None]
+        his = [x.get("max_raw") for x in rec["footers"] if x and x.get("max_raw") is not None]
+        # Unit is preserved by footer; use UTC strings already computed instead of recomputing mixed units.
+        mins = sorted(x.get("min_utc") for x in rec["footers"] if x and x.get("min_utc"))
+        maxs = sorted(x.get("max_utc") for x in rec["footers"] if x and x.get("max_utc"))
+        rec["min_utc"] = mins[0] if mins else None
+        rec["max_utc"] = maxs[-1] if maxs else None
+        rec["rows"] = sum(int(x.get("rows", 0)) for x in rec["footers"] if x)
+        out["objects"][kind] = rec
+    market_matches = sorted(x for x in files if "market" in x.lower() and x.endswith(".parquet"))
+    out["market_files"] = market_matches[:100]
     return out
 
 
@@ -101,8 +136,6 @@ def audit_kaboom():
     files = api.list_repo_files(repo, revision=rev, repo_type="dataset")
     shards = sorted(x for x in files if x.endswith(".parquet"))
     out = {"repo": repo, "revision": rev, "total_files": len(files), "parquet_files": len(shards)}
-    # Read footer stats for every shard; stop at metadata only. This is the only way to know
-    # whether the stated February collection actually spans the full requested quarter.
     stats = []
     for i, path in enumerate(shards):
         try:
@@ -112,10 +145,10 @@ def audit_kaboom():
             stats.append({"path": path, "error": repr(exc)})
         if (i + 1) % 25 == 0:
             print("KABOOM_FOOTERS", i + 1, "/", len(shards), flush=True)
-    los = [x.get("min_raw") for x in stats if x.get("min_raw") is not None]
-    his = [x.get("max_raw") for x in stats if x.get("max_raw") is not None]
-    out["min_utc"] = ts_iso(min(los), "ms") if los else None
-    out["max_utc"] = ts_iso(max(his), "ms") if his else None
+    mins = sorted(x.get("min_utc") for x in stats if x.get("min_utc"))
+    maxs = sorted(x.get("max_utc") for x in stats if x.get("max_utc"))
+    out["min_utc"] = mins[0] if mins else None
+    out["max_utc"] = maxs[-1] if maxs else None
     out["rows"] = sum(int(x.get("rows", 0)) for x in stats)
     out["errors"] = [x for x in stats if x.get("error")]
     out["sample_stats"] = stats[:2] + stats[-2:] if len(stats) > 4 else stats
@@ -126,10 +159,11 @@ def audit_brock_old():
     repo = "BrockMisner/polymarket_crypto_derivatives"
     rev = "ec37184fcc76a92045bb0a72afad0be6c626487c"
     files = api.list_repo_files(repo, revision=rev, repo_type="dataset")
-    pat = re.compile(r"^btc15m_market\d+_(\d{4}-\d{2}-\d{2})_(\d{2}-\d{2}-\d{2})\.ndjson$")
+    # Accept both bare and nested BTC15m episode names and any newline-json suffix.
+    pat = re.compile(r"(?:^|/)btc15m_market\d+_(\d{4}-\d{2}-\d{2})_(\d{2}-\d{2}-\d{2}).*\.(?:ndjson|jsonl)(?:\.gz)?$", re.I)
     dts = []
     for x in files:
-        m = pat.match(x)
+        m = pat.search(x)
         if m:
             dts.append(datetime.strptime(m.group(1) + "_" + m.group(2), "%Y-%m-%d_%H-%M-%S").replace(tzinfo=timezone.utc))
     dts.sort()
@@ -144,17 +178,60 @@ def audit_brock_old():
         "calendar_days": len(days),
         "first_days": days[:5],
         "last_days": days[-5:],
+        "sample_btc_paths": [x for x in files if "btc15m" in x.lower()][:20],
     }
+
+
+def audit_unified_onchain_trades():
+    """Execution-ground-truth candidate; metadata only, never strategy selection."""
+    repo = "yamalalaxman/polymarket-btc-trades"
+    info = api.dataset_info(repo)
+    rev = info.sha
+    files = api.list_repo_files(repo, revision=rev, repo_type="dataset")
+    # Preserve the full path inventory shape; date parsing is deliberately permissive.
+    dates = []
+    for path in files:
+        for m in re.finditer(r"(2026[-_/]\d{2}[-_/]\d{2})", path):
+            s = m.group(1).replace("_", "-").replace("/", "-")
+            try:
+                dates.append(datetime.strptime(s, "%Y-%m-%d").date().isoformat())
+            except Exception:
+                pass
+    dates = sorted(set(dates))
+    return {
+        "repo": repo,
+        "revision": rev,
+        "total_files": len(files),
+        "min_date_from_paths": dates[0] if dates else None,
+        "max_date_from_paths": dates[-1] if dates else None,
+        "calendar_dates_from_paths": len(dates),
+        "first_paths": files[:40],
+        "last_paths": files[-40:],
+    }
+
+
+def audit_krish_v1():
+    repo = "krish301/polymarket-crypto-trades-v1"
+    info = api.dataset_info(repo)
+    rev = info.sha
+    files = api.list_repo_files(repo, revision=rev, repo_type="dataset")
+    btc = [x for x in files if "/btc/15m/" in x.lower() or "btc/15m" in x.lower()]
+    return {"repo": repo, "revision": rev, "total_files": len(files), "btc15m_files": len(btc),
+            "first_btc_paths": btc[:20], "last_btc_paths": btc[-20:]}
 
 
 def main():
     result = {
         "target": {"start": "2026-03-01T00:00:00Z", "end_exclusive": "2026-06-02T00:00:00Z", "days": 93},
-        "aliplayer": audit_aliplayer(),
-        "kaboomfox": audit_kaboom(),
-        "brock_old": audit_brock_old(),
+        "audit_policy": "source coverage/schema only; no strategy score or PnL is computed in this workflow",
     }
-    (OUT / "audit.json").write_text(json.dumps(result, indent=2))
+    persist(result)
+    safe("aliplayer", audit_aliplayer, result)
+    safe("kaboomfox", audit_kaboom, result)
+    safe("brock_old", audit_brock_old, result)
+    safe("unified_onchain_trades", audit_unified_onchain_trades, result)
+    safe("krish_v1", audit_krish_v1, result)
+    persist(result)
     print(json.dumps(result, indent=2), flush=True)
 
 
