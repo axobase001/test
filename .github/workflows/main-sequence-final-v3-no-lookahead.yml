@@ -1,0 +1,159 @@
+name: main-sequence-final-v3-no-lookahead
+
+on:
+  workflow_dispatch:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: main-sequence-final-v3-no-lookahead-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  PYTHONUNBUFFERED: "1"
+  PYTHONPATH: "."
+
+jobs:
+  freeze-protocol:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install stack
+        run: python -m pip install 'honest-backtest[parquet]==0.2.0' requests scipy pandas pyarrow numpy
+      - name: Syntax gate
+        run: python -m py_compile main_sequence/final_recent_replay.py main_sequence/final_recent_no_lookahead.py
+      - name: Freeze v3 protocol
+        run: python main_sequence/final_recent_no_lookahead.py protocol --out final_v3_protocol
+      - uses: actions/upload-artifact@v4
+        with:
+          name: main-sequence-final-v3-protocol
+          path: final_v3_protocol/FROZEN_FINAL_RECENT_PROTOCOL.json
+          retention-days: 14
+
+  # Production decision first: exact 2026-05-15 -> 2026-08-15 window.
+  latest-3m:
+    needs: freeze-protocol
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        include:
+          - { shard: may_b, start: "2026-05-15", end: "2026-06-01" }
+          - { shard: jun_a, start: "2026-06-01", end: "2026-06-16" }
+          - { shard: jun_b, start: "2026-06-16", end: "2026-07-01" }
+          - { shard: jul_a, start: "2026-07-01", end: "2026-07-16" }
+          - { shard: jul_b, start: "2026-07-16", end: "2026-08-01" }
+          - { shard: aug_2026, start: "2026-08-01", end: "2026-08-15" }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install stack
+        run: python -m pip install 'honest-backtest[parquet]==0.2.0' requests scipy pandas pyarrow numpy
+      - name: Score no-lookahead recent shard
+        run: |
+          python main_sequence/final_recent_no_lookahead.py score \
+            --start '${{ matrix.start }}' --end '${{ matrix.end }}' \
+            --shard '${{ matrix.shard }}' --out 'v3_${{ matrix.shard }}' --workers 4
+      - name: Show shard result
+        if: always()
+        run: test ! -f 'v3_${{ matrix.shard }}/summary.json' || cat 'v3_${{ matrix.shard }}/summary.json'
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: main-sequence-final-v3-shard-${{ matrix.shard }}
+          path: |
+            v3_${{ matrix.shard }}/dual_exit_records.csv
+            v3_${{ matrix.shard }}/market_inventory.csv
+            v3_${{ matrix.shard }}/summary.json
+          if-no-files-found: warn
+          retention-days: 14
+
+  # Remaining calendar history needed for 6m / 9m / 12m windows.
+  historical-tail:
+    needs: freeze-protocol
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 5
+      matrix:
+        include:
+          - { shard: aug15_2025, start: "2025-08-15", end: "2025-09-01" }
+          - { shard: sep_2025, start: "2025-09-01", end: "2025-10-01" }
+          - { shard: oct_a, start: "2025-10-01", end: "2025-10-16" }
+          - { shard: oct_b, start: "2025-10-16", end: "2025-11-01" }
+          - { shard: nov_a, start: "2025-11-01", end: "2025-11-15" }
+          - { shard: nov_b, start: "2025-11-15", end: "2025-12-01" }
+          - { shard: dec_a, start: "2025-12-01", end: "2025-12-16" }
+          - { shard: dec_b, start: "2025-12-16", end: "2026-01-01" }
+          - { shard: jan_a, start: "2026-01-01", end: "2026-01-16" }
+          - { shard: jan_b, start: "2026-01-16", end: "2026-02-01" }
+          - { shard: feb_a, start: "2026-02-01", end: "2026-02-15" }
+          - { shard: feb_b, start: "2026-02-15", end: "2026-03-01" }
+          - { shard: mar_a, start: "2026-03-01", end: "2026-03-16" }
+          - { shard: mar_b, start: "2026-03-16", end: "2026-04-01" }
+          - { shard: apr_a, start: "2026-04-01", end: "2026-04-16" }
+          - { shard: apr_b, start: "2026-04-16", end: "2026-05-01" }
+          - { shard: may_a, start: "2026-05-01", end: "2026-05-15" }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install stack
+        run: python -m pip install 'honest-backtest[parquet]==0.2.0' requests scipy pandas pyarrow numpy
+      - name: Score no-lookahead historical shard
+        run: |
+          python main_sequence/final_recent_no_lookahead.py score \
+            --start '${{ matrix.start }}' --end '${{ matrix.end }}' \
+            --shard '${{ matrix.shard }}' --out 'v3_${{ matrix.shard }}' --workers 4
+      - name: Show shard result
+        if: always()
+        run: test ! -f 'v3_${{ matrix.shard }}/summary.json' || cat 'v3_${{ matrix.shard }}/summary.json'
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: main-sequence-final-v3-shard-${{ matrix.shard }}
+          path: |
+            v3_${{ matrix.shard }}/dual_exit_records.csv
+            v3_${{ matrix.shard }}/market_inventory.csv
+            v3_${{ matrix.shard }}/summary.json
+          if-no-files-found: warn
+          retention-days: 14
+
+  aggregate:
+    needs: [latest-3m, historical-tail]
+    if: always() && needs.latest-3m.result == 'success' && needs.historical-tail.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install stack
+        run: python -m pip install 'honest-backtest[parquet]==0.2.0' requests scipy pandas pyarrow numpy
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: main-sequence-final-v3-shard-*
+          path: all_v3_shards
+          merge-multiple: false
+      - name: Aggregate exact 3/6/9/12m windows
+        run: python main_sequence/final_recent_no_lookahead.py aggregate --root all_v3_shards --out final_v3_aggregate
+      - name: Show final result
+        run: cat final_v3_aggregate/SUMMARY.md && cat final_v3_aggregate/summary.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: main-sequence-final-v3-no-lookahead-aggregate
+          path: |
+            final_v3_aggregate/summary.json
+            final_v3_aggregate/SUMMARY.md
+            final_v3_aggregate/all_records.csv
+            final_v3_aggregate/all_market_inventory.csv
+          retention-days: 14
