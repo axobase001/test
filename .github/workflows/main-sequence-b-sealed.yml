@@ -9,6 +9,7 @@ on:
       - 'main_sequence/prejuly_5m_official_sealed.py'
       - 'main_sequence/prejuly_5m_official_stream.py'
       - 'main_sequence/prejuly_5m_official_final.py'
+      - 'main_sequence/prejuly_5m_official_release.py'
       - '.github/workflows/main-sequence-b-sealed.yml'
 
 permissions:
@@ -39,11 +40,12 @@ jobs:
           python -m py_compile main_sequence/prejuly_5m_official_sealed.py
           python -m py_compile main_sequence/prejuly_5m_official_stream.py
           python -m py_compile main_sequence/prejuly_5m_official_final.py
+          python -m py_compile main_sequence/prejuly_5m_official_release.py
       - name: June exact-equivalence gate
-        run: python main_sequence/prejuly_5m_official_final.py equiv
+        run: python main_sequence/prejuly_5m_official_release.py equiv
       - name: Train pre-July only and freeze
         run: |
-          python main_sequence/prejuly_5m_official_final.py train \
+          python main_sequence/prejuly_5m_official_release.py train \
             --out main_sequence_b_train
       - name: Show frozen contract and train summary
         if: always()
@@ -97,9 +99,9 @@ jobs:
           assert p['transport'].startswith('per-5m-slot start..decision+5s')
           print('SEALED_CONTRACT_OK')
           PY
-      - name: Open July 1-14 once and score frozen model
+      - name: Open complete July 1-14 once and score frozen model
         run: |
-          python main_sequence/prejuly_5m_official_final.py test \
+          python main_sequence/prejuly_5m_official_release.py test \
             --model-dir frozen_b \
             --out main_sequence_b_july_test
       - name: Show sealed test result
