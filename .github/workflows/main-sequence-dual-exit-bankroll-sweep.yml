@@ -1,0 +1,40 @@
+name: main-sequence-dual-exit-bankroll-sweep
+
+on:
+  pull_request:
+    paths:
+      - 'main_sequence/dual_exit_bankroll_sweep.py'
+      - '.github/workflows/main-sequence-dual-exit-bankroll-sweep.yml'
+  workflow_dispatch:
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    env:
+      PYTHONUNBUFFERED: '1'
+      PYTHONPATH: '.'
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install stack
+        run: python -m pip install pandas numpy
+      - name: Download authoritative corrected dual-exit shards
+        run: |
+          mkdir -p dual_shards
+          for n in mar apr may jun1; do
+            gh run download 31885683821 -n "main-sequence-dual-exit-v2-${n}" -D "dual_shards/${n}"
+          done
+      - name: Run 5x3 bankroll sweep
+        run: python main_sequence/dual_exit_bankroll_sweep.py --root dual_shards --out sweep_out
+      - name: Show witness sweep
+        run: cat sweep_out/witness_sweep.csv
+      - name: Show strict sweep
+        run: cat sweep_out/strict5_sweep.csv
+      - uses: actions/upload-artifact@v4
+        with:
+          name: main-sequence-dual-exit-bankroll-sweep
+          path: sweep_out/
+          retention-days: 14
