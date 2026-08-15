@@ -41,9 +41,9 @@ jobs:
             external_inventory2/
           retention-days: 7
 
-  frozen-v1-external-smoke:
+  frozen-v1-external-full:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -65,25 +65,25 @@ jobs:
           test -f frozen_v1/main_sequence_v1.pt
           test -f frozen_v1/scaler.npz
           ls -lh frozen_v1/main_sequence_v1.pt frozen_v1/scaler.npz
-      - name: Run two-day external OOD smoke
+      - name: Run full independent external OOD
         run: |
           PYTHONPATH=. python main_sequence/external_vinayak_v1.py \
             --csv-dir vinayak/csv_data \
             --model-dir frozen_v1 \
-            --out external_v1_smoke \
+            --out external_v1_full \
             --cache external_v1_cache \
             --start 2026-03-24 \
-            --end 2026-03-25
+            --end 2026-04-26
       - name: Show external result
         if: always()
         run: |
-          if [ -f external_v1_smoke/SUMMARY.md ]; then cat external_v1_smoke/SUMMARY.md; fi
-          if [ -f external_v1_smoke/summary.json ]; then python -m json.tool external_v1_smoke/summary.json; fi
-      - name: Upload external smoke
+          if [ -f external_v1_full/SUMMARY.md ]; then cat external_v1_full/SUMMARY.md; fi
+          if [ -f external_v1_full/summary.json ]; then python -m json.tool external_v1_full/summary.json; fi
+      - name: Upload external full
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: main-sequence-v1-external-smoke
-          path: external_v1_smoke/
+          name: main-sequence-v1-external-full
+          path: external_v1_full/
           if-no-files-found: warn
           retention-days: 7
