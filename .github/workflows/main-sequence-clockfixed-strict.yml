@@ -6,6 +6,7 @@ on:
     paths:
       - 'pm_structural/time_units.py'
       - 'pm_structural/obadiaha_strict_clockfixed.py'
+      - 'pm_structural/oracle_direction_audit.py'
       - '.github/workflows/main-sequence-clockfixed-strict.yml'
 
 permissions:
@@ -40,6 +41,14 @@ jobs:
             --latency-ms 1000 \
             --tape-window-ms 15000 \
             --base-stake 5
+      - name: Audit settlement oracle direction
+        run: |
+          PYTHONPATH=. python pm_structural/oracle_direction_audit.py \
+            --fills march_clockfixed/fills_strict_coarse.csv \
+            --out march_clockfixed/oracle_direction \
+            --cache march_clockfixed/oracle_direction_cache \
+            --start 2026-03-02 \
+            --end 2026-03-18
       - name: Replay causal bankroll with audited capacity gates
         run: |
           python main_sequence/bankroll.py \
@@ -51,6 +60,7 @@ jobs:
         run: |
           test ! -f march_clockfixed/clock_summary.json || python -m json.tool march_clockfixed/clock_summary.json
           test ! -f march_clockfixed/summary.json || python -m json.tool march_clockfixed/summary.json
+          test ! -f march_clockfixed/oracle_direction/summary.json || python -m json.tool march_clockfixed/oracle_direction/summary.json
           test ! -f march_clockfixed/bankroll/bankroll_summary.json || python -m json.tool march_clockfixed/bankroll/bankroll_summary.json
       - name: Upload corrected March strict replay
         if: always()
