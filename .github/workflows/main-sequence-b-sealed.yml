@@ -5,6 +5,7 @@ on:
     branches: [ main ]
     paths:
       - 'main_sequence/prejuly_5m_official.py'
+      - 'main_sequence/prejuly_5m_official_retryfix.py'
       - '.github/workflows/main-sequence-b-sealed.yml'
 
 permissions:
@@ -29,10 +30,12 @@ jobs:
           python -m pip install --index-url https://download.pytorch.org/whl/cpu torch
           python -m pip install numpy pandas scipy requests
       - name: Syntax gate
-        run: python -m py_compile main_sequence/prejuly_5m_official.py
+        run: |
+          python -m py_compile main_sequence/prejuly_5m_official.py
+          python -m py_compile main_sequence/prejuly_5m_official_retryfix.py
       - name: Train pre-July only and freeze
         run: |
-          python main_sequence/prejuly_5m_official.py train \
+          python main_sequence/prejuly_5m_official_retryfix.py train \
             --out main_sequence_b_train
       - name: Show frozen contract and train summary
         if: always()
@@ -85,7 +88,7 @@ jobs:
           PY
       - name: Open July 1-14 once and score frozen model
         run: |
-          python main_sequence/prejuly_5m_official.py test \
+          python main_sequence/prejuly_5m_official_retryfix.py test \
             --model-dir frozen_b \
             --out main_sequence_b_july_test
       - name: Show sealed test result
