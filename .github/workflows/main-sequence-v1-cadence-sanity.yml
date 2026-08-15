@@ -1,0 +1,72 @@
+name: main-sequence-v1-cadence-sanity
+
+on:
+  push:
+    branches: [ main-sequence-v1-cadence-audit-20260816 ]
+    paths:
+      - 'main_sequence/external_vinayak_v1_cadence.py'
+      - '.github/workflows/main-sequence-v1-cadence-sanity.yml'
+
+permissions:
+  contents: read
+
+env:
+  PYTHONUNBUFFERED: '1'
+
+jobs:
+  one-day-context-only:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install minimal stack
+        run: python -m pip install 'honest-backtest[parquet]==0.2.0' requests scipy pandas pyarrow numpy
+      - name: Clone pinned Vinayak collector
+        run: |
+          git clone --depth 1 https://github.com/Vinayak19112003/Polymarket-orderbooks.git vinayak
+          git -C vinayak fetch --depth 1 origin 280a29b9b818cc742c096af81c62e4bf899d44dc
+          git -C vinayak checkout 280a29b9b818cc742c096af81c62e4bf899d44dc
+      - name: Reconstruct representative 30s histories only
+        run: |
+          PYTHONPATH=. python - <<'PY'
+          from datetime import date
+          from pathlib import Path
+          import json, numpy as np
+          from pm_structural.recalc import BinanceAnchor, download_binance_1m
+          from main_sequence.external_vinayak_v1 import read_external_ctxs
+          import main_sequence.external_vinayak_v1_cadence as c
+
+          d=date(2026,3,25)
+          bn=BinanceAnchor.from_df(download_binance_1m(d,d,Path('cadence_sanity_cache/binance')))
+          ctxs,audit=read_external_ctxs(Path('vinayak/csv_data'),d,d,bn,0.07)
+          picked=[]
+          for ctx in ctxs[:40]:
+              for target_s2c in (600,450,300,150,60):
+                  s=np.asarray(ctx.s2c,dtype=float)
+                  i=int(np.argmin(np.abs(s-target_s2c)))
+                  before=len(c.SEQ_LENGTHS)
+                  c.build_sequence_cadence_matched(ctx,i)
+                  picked.append({
+                    'target_s2c':target_s2c,
+                    'actual_s2c':float(ctx.s2c[i]),
+                    'length':c.SEQ_LENGTHS[-1],
+                    'span_s':c.SEQ_SPANS_MS[-1]/1000.0,
+                    'decision_ts':int(ctx.ts[i]),
+                  })
+          lens=np.asarray([x['length'] for x in picked],float)
+          spans=np.asarray([x['span_s'] for x in picked],float)
+          out={
+            'contexts':len(ctxs),'samples':len(picked),
+            'length_min':float(lens.min()),'length_median':float(np.median(lens)),'length_max':float(lens.max()),
+            'span_s_median':float(np.median(spans)),'span_s_max':float(spans.max()),
+            'clock_audit':c.CLOCK_AUDIT,
+            'examples':picked[:20],
+            'gate_passed':bool(np.median(lens)>5 and np.median(spans)>120),
+          }
+          print(json.dumps(out,indent=2))
+          if not out['gate_passed']:
+              raise SystemExit('cadence reconstruction sanity gate failed')
+          PY
