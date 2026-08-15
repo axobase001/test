@@ -1,61 +1,11 @@
 name: main-sequence-final-mid-priority
 
 on:
-  pull_request:
-    branches: [ main-sequence-dual-exit-93d-20260815 ]
-    paths:
-      - '.github/workflows/main-sequence-final-mid-priority.yml'
   workflow_dispatch:
 
-permissions:
-  contents: read
-  actions: read
-
-env:
-  PYTHONUNBUFFERED: '1'
-  PYTHONPATH: '.'
-
 jobs:
-  mid-horizon:
+  retired:
+    if: ${{ false }}
     runs-on: ubuntu-latest
-    timeout-minutes: 240
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - shard: feb_2026
-            start: '2026-02-01'
-            end: '2026-03-01'
-          - shard: mar_2026
-            start: '2026-03-01'
-            end: '2026-04-01'
-          - shard: apr_2026
-            start: '2026-04-01'
-            end: '2026-05-01'
-          - shard: may_2026
-            start: '2026-05-01'
-            end: '2026-06-01'
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - name: Install stack
-        run: python -m pip install 'honest-backtest[parquet]==0.2.0' requests scipy pandas pyarrow numpy
-      - name: Score frozen causal shard
-        run: |
-          python main_sequence/final_recent_replay.py score \
-            --start '${{ matrix.start }}' \
-            --end '${{ matrix.end }}' \
-            --shard '${{ matrix.shard }}' \
-            --out 'mid_${{ matrix.shard }}' \
-            --workers 10
-      - uses: actions/upload-artifact@v4
-        with:
-          name: main-sequence-final-mid-${{ matrix.shard }}
-          path: |
-            mid_${{ matrix.shard }}/dual_exit_records.csv
-            mid_${{ matrix.shard }}/market_inventory.csv
-            mid_${{ matrix.shard }}/summary.json
-          if-no-files-found: warn
-          retention-days: 14
+      - run: echo 'Retired. Use main-sequence-final-v3-no-lookahead.'
