@@ -13,6 +13,7 @@ on:
       - 'main_sequence/prejuly_5m_official_final.py'
       - 'main_sequence/prejuly_5m_official_release.py'
       - 'main_sequence/quarterly_5m_official_release.py'
+      - 'main_sequence/quarterly_5m_official_v11.py'
       - '.github/workflows/main-sequence-quarter-oos.yml'
 
 permissions:
@@ -45,11 +46,12 @@ jobs:
           python -m py_compile main_sequence/prejuly_5m_official_final.py
           python -m py_compile main_sequence/prejuly_5m_official_release.py
           python -m py_compile main_sequence/quarterly_5m_official_release.py
+          python -m py_compile main_sequence/quarterly_5m_official_v11.py
       - name: Transport exact-equivalence gate
         run: python main_sequence/prejuly_5m_official_release.py equiv
-      - name: Train Feb only and freeze quarter contract
+      - name: Train pre-March only and freeze quarter contract v1.1
         run: |
-          python main_sequence/quarterly_5m_official_release.py train \
+          python main_sequence/quarterly_5m_official_v11.py train \
             --out main_sequence_quarter_train
       - name: Show frozen quarter contract
         if: always()
@@ -102,8 +104,8 @@ jobs:
           python - <<'PY'
           import json
           p=json.load(open('frozen_quarter/FROZEN_CONTRACT.json'))
-          assert p['train']==['2026-02-01','2026-02-22']
-          assert p['validation']==['2026-02-22','2026-03-01']
+          assert p['train']==['2026-02-01','2026-02-26']
+          assert p['validation']==['2026-02-26','2026-03-01']
           assert p['sealed_test']==['2026-03-01','2026-06-01']
           assert p['assets']==['BTC','ETH','SOL','XRP']
           assert p['decision_s2c']==60
@@ -113,15 +115,17 @@ jobs:
           assert p['residual_bound']==0.50
           assert p['hard_anchor'].startswith('finance_p: causal Binance')
           ec=p['evaluation_contract']
+          assert ec['protocol_name'].endswith('v1.1')
           assert ec['quarter_days']==92
           assert ec['primary_probability_comparator']=='finance_p hard anchor'
           assert '7-day moving-block' in ec['probability_gate']
           assert '7-day moving-block' in ec['execution_gate']
-          print('QUARTER_CONTRACT_OK')
+          assert 'pre_oos_protocol_amendment' in ec
+          print('QUARTER_CONTRACT_V11_OK')
           PY
       - name: Run frozen quarter shard
         run: |
-          python main_sequence/quarterly_5m_official_release.py test \
+          python main_sequence/quarterly_5m_official_v11.py test \
             --model-dir frozen_quarter \
             --out "quarter_${{ matrix.shard }}" \
             --start "${{ matrix.start }}" \
@@ -161,7 +165,7 @@ jobs:
           path: quarter_shards
       - name: Aggregate 92-day OOS statistics
         run: |
-          python main_sequence/quarterly_5m_official_release.py aggregate \
+          python main_sequence/quarterly_5m_official_v11.py aggregate \
             --shard-root quarter_shards \
             --out main_sequence_quarter_aggregate
       - name: Show quarter result
