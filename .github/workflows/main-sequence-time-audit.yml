@@ -1,0 +1,46 @@
+name: main-sequence-time-audit
+
+on:
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'pm_structural/obadiaha_time_audit.py'
+      - 'pm_structural/timefix_runner.py'
+      - 'pm_structural/time_units.py'
+      - '.github/workflows/main-sequence-time-audit.yml'
+
+permissions:
+  contents: read
+
+env:
+  PYTHONUNBUFFERED: '1'
+  HF_HUB_DISABLE_TELEMETRY: '1'
+
+jobs:
+  audit-march-time-semantics:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install audit stack
+        run: python -m pip install huggingface_hub pandas pyarrow numpy
+      - name: Audit March 14 market clocks
+        run: |
+          PYTHONPATH=. python pm_structural/timefix_runner.py timeaudit \
+            --out time_audit \
+            --cache time_audit_cache \
+            --day 2026-03-14
+      - name: Show audit
+        if: always()
+        run: test ! -f time_audit/time_audit.json || python -m json.tool time_audit/time_audit.json
+      - name: Upload audit
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: main-sequence-time-audit
+          path: time_audit/
+          if-no-files-found: warn
+          retention-days: 14

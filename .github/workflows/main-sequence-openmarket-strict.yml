@@ -1,0 +1,65 @@
+name: main-sequence-openmarket-strict
+
+on:
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'pm_structural/openmarket_strict.py'
+      - 'pm_structural/time_units.py'
+      - 'main_sequence/bankroll.py'
+      - '.github/workflows/main-sequence-openmarket-strict.yml'
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  PYTHONUNBUFFERED: '1'
+  HF_HUB_DISABLE_TELEMETRY: '1'
+
+jobs:
+  march-openmarket-strict:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install replay stack
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install 'honest-backtest[parquet]==0.2.0' huggingface_hub requests scipy pandas pyarrow numpy
+      - name: Run immutable OpenMarket quote plus independent tape replay
+        run: |
+          PYTHONPATH=. python pm_structural/openmarket_strict.py \
+            --out openmarket_strict \
+            --cache openmarket_strict_cache \
+            --start 2026-03-02 \
+            --end 2026-03-18 \
+            --threshold 0.03 \
+            --grid-ms 1000 \
+            --max-quote-age-ms 2000 \
+            --max-spot-age-ms 2000 \
+            --latency-ms 1000 \
+            --tape-window-ms 15000 \
+            --base-stake 5
+      - name: Replay user bankroll rules with audited capacity
+        run: |
+          python main_sequence/bankroll.py \
+            --fills openmarket_strict/fills_openmarket_strict.csv \
+            --out openmarket_strict/bankroll \
+            --initial 50 --base-trade 5 --single-cap 100 --market-cap 200
+      - name: Show results
+        if: always()
+        run: |
+          test ! -f openmarket_strict/summary.json || python -m json.tool openmarket_strict/summary.json
+          test ! -f openmarket_strict/bankroll/bankroll_summary.json || python -m json.tool openmarket_strict/bankroll/bankroll_summary.json
+      - name: Upload replay artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: main-sequence-openmarket-strict
+          path: openmarket_strict/
+          if-no-files-found: warn
+          retention-days: 14

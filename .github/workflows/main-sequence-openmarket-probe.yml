@@ -1,0 +1,49 @@
+name: main-sequence-openmarket-probe
+
+on:
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'pm_structural/openmarket_probe.py'
+      - 'pm_structural/timefix_runner.py'
+      - 'pm_structural/time_units.py'
+      - '.github/workflows/main-sequence-openmarket-probe.yml'
+
+permissions:
+  contents: read
+
+env:
+  PYTHONUNBUFFERED: '1'
+  HF_HUB_DISABLE_TELEMETRY: '1'
+
+jobs:
+  openmarket-march-cross-source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install probe stack
+        run: python -m pip install 'honest-backtest[parquet]==0.2.0' huggingface_hub pandas pyarrow numpy requests scipy
+      - name: Compare OpenMarket quote truth with independent Obadiaha tape
+        run: |
+          PYTHONPATH=. python pm_structural/timefix_runner.py openmarket \
+            --out openmarket_probe \
+            --cache openmarket_probe_cache \
+            --day 2026-03-15 \
+            --coverage-start 2026-03-02 \
+            --coverage-end 2026-03-18 \
+            --max-lag-ms 2000
+      - name: Show probe
+        if: always()
+        run: test ! -f openmarket_probe/probe.json || python -m json.tool openmarket_probe/probe.json
+      - name: Upload probe
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: main-sequence-openmarket-probe
+          path: openmarket_probe/
+          if-no-files-found: warn
+          retention-days: 14

@@ -1,0 +1,44 @@
+name: main-sequence-trent-audit
+
+on:
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'research_tools/trent_audit.py'
+      - '.github/workflows/main-sequence-trent-audit.yml'
+
+permissions:
+  contents: read
+
+env:
+  PYTHONUNBUFFERED: '1'
+  HF_HUB_DISABLE_TELEMETRY: '1'
+
+jobs:
+  audit-trent-chainlink-corpus:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install audit stack
+        run: python -m pip install huggingface_hub pandas pyarrow
+      - name: Resolve revision and inspect a March BTC15m episode
+        run: |
+          python research_tools/trent_audit.py \
+            --out trent_audit \
+            --cache trent_audit_cache \
+            --day 2026-03-14
+      - name: Show audit
+        if: always()
+        run: test ! -f trent_audit/trent_audit.json || python -m json.tool trent_audit/trent_audit.json
+      - name: Upload audit
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: main-sequence-trent-audit
+          path: trent_audit/
+          if-no-files-found: warn
+          retention-days: 14
