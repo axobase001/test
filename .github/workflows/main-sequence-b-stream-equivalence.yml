@@ -1,0 +1,36 @@
+name: main-sequence-b-stream-equivalence
+
+on:
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'main_sequence/prejuly_5m_official.py'
+      - 'main_sequence/prejuly_5m_official_retryfix.py'
+      - 'main_sequence/prejuly_5m_official_sealed.py'
+      - 'main_sequence/prejuly_5m_official_stream.py'
+      - '.github/workflows/main-sequence-b-stream-equivalence.yml'
+
+permissions:
+  contents: read
+
+env:
+  PYTHONUNBUFFERED: '1'
+
+jobs:
+  june-equivalence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install stack
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --index-url https://download.pytorch.org/whl/cpu torch
+          python -m pip install numpy pandas scipy requests
+      - name: Syntax
+        run: python -m py_compile main_sequence/prejuly_5m_official_stream.py
+      - name: Prove stream transport equals full fetch on June hour
+        run: python main_sequence/prejuly_5m_official_stream.py equiv
