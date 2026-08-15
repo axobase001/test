@@ -5,6 +5,7 @@ on:
     branches: [ main ]
     paths:
       - 'main_sequence/pmxt_probe.py'
+      - 'main_sequence/clob_history_probe.py'
       - '.github/workflows/main-sequence-pmxt-probe.yml'
 
 permissions:
@@ -23,3 +24,5 @@ jobs:
         run: python -m pip install duckdb requests
       - name: Probe one pmxt hour
         run: python main_sequence/pmxt_probe.py
+      - name: Probe official CLOB historical endpoints on June only
+        run: python main_sequence/clob_history_probe.py
