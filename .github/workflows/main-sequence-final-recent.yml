@@ -1,0 +1,115 @@
+name: main-sequence-final-recent
+
+on:
+  pull_request:
+    branches: [ main-sequence-dual-exit-93d-20260815 ]
+    paths:
+      - 'main_sequence/final_recent_replay.py'
+      - '.github/workflows/main-sequence-final-recent.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  PYTHONUNBUFFERED: '1'
+  PYTHONPATH: '.'
+
+jobs:
+  freeze-protocol:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install stack
+        run: python -m pip install 'honest-backtest[parquet]==0.2.0' requests scipy pandas pyarrow numpy
+      - name: Syntax gate
+        run: python -m py_compile main_sequence/final_recent_replay.py
+      - name: Freeze final protocol
+        run: python main_sequence/final_recent_replay.py protocol --out frozen_protocol
+      - uses: actions/upload-artifact@v4
+        with:
+          name: main-sequence-final-recent-protocol
+          path: frozen_protocol/
+          retention-days: 14
+
+  score:
+    needs: freeze-protocol
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        include:
+          - { shard: aug15_2025, start: '2025-08-15', end: '2025-09-01' }
+          - { shard: sep_2025, start: '2025-09-01', end: '2025-10-01' }
+          - { shard: oct_2025, start: '2025-10-01', end: '2025-11-01' }
+          - { shard: nov_2025, start: '2025-11-01', end: '2025-12-01' }
+          - { shard: dec_2025, start: '2025-12-01', end: '2026-01-01' }
+          - { shard: jan_2026, start: '2026-01-01', end: '2026-02-01' }
+          - { shard: feb_2026, start: '2026-02-01', end: '2026-03-01' }
+          - { shard: mar_2026, start: '2026-03-01', end: '2026-04-01' }
+          - { shard: apr_2026, start: '2026-04-01', end: '2026-05-01' }
+          - { shard: may_2026, start: '2026-05-01', end: '2026-06-01' }
+          - { shard: jun_2026, start: '2026-06-01', end: '2026-07-01' }
+          - { shard: jul_2026, start: '2026-07-01', end: '2026-08-01' }
+          - { shard: aug14_2026, start: '2026-08-01', end: '2026-08-15' }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install stack
+        run: python -m pip install 'honest-backtest[parquet]==0.2.0' requests scipy pandas pyarrow numpy
+      - name: Score causal monthly shard
+        run: |
+          python main_sequence/final_recent_replay.py score \
+            --start '${{ matrix.start }}' \
+            --end '${{ matrix.end }}' \
+            --shard '${{ matrix.shard }}' \
+            --out 'recent_${{ matrix.shard }}' \
+            --workers 12
+      - name: Show shard result
+        if: always()
+        run: test ! -f 'recent_${{ matrix.shard }}/summary.json' || cat 'recent_${{ matrix.shard }}/summary.json'
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: main-sequence-final-recent-shard-${{ matrix.shard }}
+          path: |
+            recent_${{ matrix.shard }}/dual_exit_records.csv
+            recent_${{ matrix.shard }}/market_inventory.csv
+            recent_${{ matrix.shard }}/summary.json
+          if-no-files-found: warn
+          retention-days: 14
+
+  aggregate:
+    needs: score
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install stack
+        run: python -m pip install 'honest-backtest[parquet]==0.2.0' requests scipy pandas pyarrow numpy
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: main-sequence-final-recent-shard-*
+          path: final_shards
+      - name: Aggregate frozen 3/6/9/12m windows
+        run: python main_sequence/final_recent_replay.py aggregate --root final_shards --out final_aggregate
+      - name: Show final result
+        run: |
+          cat final_aggregate/SUMMARY.md
+          cat final_aggregate/summary.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: main-sequence-final-recent-aggregate
+          path: final_aggregate/
+          retention-days: 14
