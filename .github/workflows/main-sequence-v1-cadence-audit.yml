@@ -1,0 +1,67 @@
+name: main-sequence-v1-cadence-audit
+
+on:
+  push:
+    branches: [ main-sequence-v1-cadence-audit-20260816 ]
+    paths:
+      - 'main_sequence/external_vinayak_v1_cadence.py'
+      - '.github/workflows/main-sequence-v1-cadence-audit.yml'
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  PYTHONUNBUFFERED: '1'
+  HF_HUB_DISABLE_TELEMETRY: '1'
+
+jobs:
+  frozen-v1-30s-sequence-sensitivity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install frozen V1 replay stack
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --index-url https://download.pytorch.org/whl/cpu torch
+          python -m pip install 'honest-backtest[parquet]==0.2.0' requests scipy pandas pyarrow numpy
+      - name: Clone pinned independent BTC15m collector
+        run: |
+          git clone https://github.com/Vinayak19112003/Polymarket-orderbooks.git vinayak
+          git -C vinayak checkout 280a29b9b818cc742c096af81c62e4bf899d44dc
+          test "$(git -C vinayak rev-parse HEAD)" = "280a29b9b818cc742c096af81c62e4bf899d44dc"
+      - name: Download original frozen Main Sequence v1 artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p frozen_v1
+          gh run download 31786389773 -n main-sequence-v1-results -D frozen_v1
+          test -f frozen_v1/main_sequence_v1.pt
+          test -f frozen_v1/scaler.npz
+      - name: Run 30s recurrent-history cadence sensitivity audit
+        run: |
+          PYTHONPATH=. python main_sequence/external_vinayak_v1_cadence.py \
+            --csv-dir vinayak/csv_data \
+            --model-dir frozen_v1 \
+            --out external_v1_cadence30 \
+            --cache external_v1_cadence30_cache \
+            --start 2026-03-24 \
+            --end 2026-04-26
+      - name: Show audit result
+        if: always()
+        run: |
+          test ! -f external_v1_cadence30/sequence_cadence_audit.json || python -m json.tool external_v1_cadence30/sequence_cadence_audit.json
+          test ! -f external_v1_cadence30/summary.json || python -m json.tool external_v1_cadence30/summary.json
+          test ! -f external_v1_cadence30/SUMMARY.md || cat external_v1_cadence30/SUMMARY.md
+      - name: Upload cadence audit
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: main-sequence-v1-cadence30-audit
+          path: external_v1_cadence30/
+          if-no-files-found: warn
+          retention-days: 14
