@@ -1,0 +1,124 @@
+name: main-sequence-dual-exit-93d
+
+on:
+  pull_request:
+    branches: [ main-sequence-original-93d-20260815 ]
+    paths:
+      - 'main_sequence/original_93d_dual_exit.py'
+      - '.github/workflows/main-sequence-dual-exit-93d.yml'
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  PYTHONUNBUFFERED: '1'
+  PYTHONPATH: '.'
+  GH_TOKEN: ${{ github.token }}
+
+jobs:
+  freeze-protocol:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install analysis stack
+        run: python -m pip install 'honest-backtest[parquet]==0.2.0' requests scipy pandas pyarrow numpy
+      - name: Syntax gate
+        run: python -m py_compile main_sequence/original_93d_dual_exit.py
+      - name: Freeze corrected dual-exit protocol before reading replay records
+        run: python main_sequence/original_93d_dual_exit.py protocol --out dual_protocol
+      - uses: actions/upload-artifact@v4
+        with:
+          name: main-sequence-dual-exit-protocol
+          path: dual_protocol/
+          if-no-files-found: error
+          retention-days: 14
+
+  score:
+    needs: freeze-protocol
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [mar, apr, may, jun1]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install analysis stack
+        run: python -m pip install 'honest-backtest[parquet]==0.2.0' requests scipy pandas pyarrow numpy
+      - name: Download authoritative frozen anchors
+        run: |
+          mkdir -p prior/anchors
+          gh run download 31883052702 -n main-sequence-original-93d-anchors -D prior/anchors
+          test -f prior/anchors/FROZEN_CONTRACT.json
+      - name: Download authoritative frozen original replay shard
+        run: |
+          mkdir -p "prior/${{ matrix.shard }}"
+          gh run download 31883052702 -n "main-sequence-original-93d-${{ matrix.shard }}" -D "prior/${{ matrix.shard }}"
+          test -f "prior/${{ matrix.shard }}/signals.csv"
+          test -d "prior/${{ matrix.shard }}/binance_1s_cache"
+      - name: Verify prior contract hash fields
+        run: |
+          python - <<'PY'
+          import json
+          p=json.load(open('prior/anchors/FROZEN_CONTRACT.json'))
+          assert p['period']==['2026-03-01','2026-06-02']
+          assert p['threshold']==0.03 and p['size_shares']==5.0
+          assert p['selected_deribit_instruments']==1790
+          assert p['deribit_usable_anchor_trades']==74846
+          print('PRIOR_ORIGINAL_CONTRACT_OK')
+          PY
+      - name: Score corrected dual-exit shard
+        run: |
+          python main_sequence/original_93d_dual_exit.py score \
+            --prior-shard "prior/${{ matrix.shard }}" \
+            --anchor-dir prior/anchors \
+            --out "dual_${{ matrix.shard }}" \
+            --shard "${{ matrix.shard }}" \
+            --workers 10
+      - name: Show shard summary
+        if: always()
+        run: test ! -f "dual_${{ matrix.shard }}/summary.json" || cat "dual_${{ matrix.shard }}/summary.json"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: main-sequence-dual-exit-${{ matrix.shard }}
+          path: dual_${{ matrix.shard }}/
+          if-no-files-found: warn
+          retention-days: 14
+
+  aggregate:
+    needs: score
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install analysis stack
+        run: python -m pip install 'honest-backtest[parquet]==0.2.0' requests scipy pandas pyarrow numpy
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: main-sequence-dual-exit-*
+          path: dual_shards
+      - name: Aggregate corrected 93-day dual-exit replay
+        run: python main_sequence/original_93d_dual_exit.py aggregate --root dual_shards --out dual_aggregate
+      - name: Show final result
+        if: always()
+        run: |
+          test ! -f dual_aggregate/SUMMARY.md || cat dual_aggregate/SUMMARY.md
+          test ! -f dual_aggregate/summary.json || cat dual_aggregate/summary.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: main-sequence-dual-exit-aggregate
+          path: dual_aggregate/
+          if-no-files-found: warn
+          retention-days: 14
