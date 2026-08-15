@@ -97,6 +97,10 @@ jobs:
           assert p['hard_anchor'].startswith('finance_p: causal Binance')
           assert p['pm_last_role'].startswith('microstructure feature')
           assert p['transport'].startswith('per-5m-slot start..decision+5s')
+          ec=p['evaluation_contract']
+          assert ec['primary_probability_comparator']=='finance_p hard anchor'
+          assert ec['secondary_probability_comparator'].startswith('PM last pre-decision trade')
+          assert ec['execution_role'].startswith('5-second public taker-BUY tape proxy')
           print('SEALED_CONTRACT_OK')
           PY
       - name: Open complete July 1-14 once and score frozen model
