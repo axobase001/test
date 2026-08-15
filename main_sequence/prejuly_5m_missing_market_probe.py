@@ -1,20 +1,25 @@
 from __future__ import annotations
 
 import json
-import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 
 import requests
 
 GAMMA = "https://gamma-api.polymarket.com"
 ASSETS = ["BTC", "ETH", "SOL", "XRP"]
-START = int(datetime(2026, 6, 1, tzinfo=timezone.utc).timestamp())
-END = int(datetime(2026, 7, 1, tzinfo=timezone.utc).timestamp())
+# Prior complete-run counters localize all 19 missing theoretical listings to this window.
+START = int(datetime(2026, 6, 17, tzinfo=timezone.utc).timestamp())
+END = int(datetime(2026, 6, 21, tzinfo=timezone.utc).timestamp())
 
 
-def get(sess: requests.Session, path: str, params):
-    r = sess.get(GAMMA + path, params=params, timeout=30)
-    print("HTTP", r.status_code, r.url, flush=True) if r.status_code != 200 else None
+def get(path: str, params):
+    r = requests.get(
+        GAMMA + path,
+        params=params,
+        timeout=30,
+        headers={"User-Agent": "main-sequence-june-missing-audit/2.0"},
+    )
     r.raise_for_status()
     return r.json()
 
@@ -23,74 +28,87 @@ def iso(ts: int) -> str:
     return datetime.fromtimestamp(ts, timezone.utc).isoformat()
 
 
-def main():
-    sess = requests.Session()
-    sess.headers.update({"User-Agent": "main-sequence-june-missing-audit/1.0"})
+def audit_hour(h: int):
+    wanted = [(f"{a.lower()}-updown-5m-{t0}", a, t0)
+              for a in ASSETS for t0 in range(h, h + 3600, 300)]
+    params = [("slug", slug) for slug, _, _ in wanted] + [("closed", "true"), ("limit", 100)]
+    js = get("/markets", params)
+    slugs = {str(x.get("slug")) for x in js}
+    miss = [(slug, a, t0) for slug, a, t0 in wanted if slug not in slugs]
+    return h, wanted, slugs, miss, len(js)
 
+
+def audit_missing(item):
+    slug, asset, t0 = item
+    q_any = get("/markets", [("slug", slug), ("limit", 20)])
+    q_closed = get("/markets", [("slug", slug), ("closed", "true"), ("limit", 20)])
+    q_open = get("/markets", [("slug", slug), ("closed", "false"), ("limit", 20)])
+    neighbors = []
+    for dt in (-600, -300, 300, 600):
+        nslug = f"{asset.lower()}-updown-5m-{t0 + dt}"
+        qn = get("/markets", [("slug", nslug), ("limit", 5)])
+        neighbors.append({"dt": dt, "slug": nslug, "count": len(qn)})
+    return {
+        "slug": slug,
+        "asset": asset,
+        "start": t0,
+        "start_iso": iso(t0),
+        "single_any_count": len(q_any),
+        "single_closed_count": len(q_closed),
+        "single_open_count": len(q_open),
+        "single_any": [{
+            "slug": x.get("slug"),
+            "conditionId": x.get("conditionId"),
+            "closed": x.get("closed"),
+            "active": x.get("active"),
+            "archived": x.get("archived"),
+            "question": x.get("question"),
+        } for x in q_any],
+        "neighbors": neighbors,
+    }
+
+
+def main():
+    hours = list(range(START, END, 3600))
     expected = []
     batch_seen = set()
-    batch_missing_by_hour = []
+    missing_by_hour = []
+    missing = []
 
-    for i, h in enumerate(range(START, END, 3600), 1):
-        wanted = [(f"{a.lower()}-updown-5m-{t0}", a, t0)
-                  for a in ASSETS for t0 in range(h, h + 3600, 300)]
-        expected.extend(wanted)
-        params = [("slug", slug) for slug, _, _ in wanted] + [("closed", "true"), ("limit", 100)]
-        js = get(sess, "/markets", params)
-        slugs = {str(x.get("slug")) for x in js}
-        batch_seen |= slugs
-        miss = [(slug, a, t0) for slug, a, t0 in wanted if slug not in slugs]
-        if miss:
-            batch_missing_by_hour.append({
-                "hour": h,
-                "hour_iso": iso(h),
-                "missing": [x[0] for x in miss],
-                "returned": len(js),
-            })
-        if i % 120 == 0:
-            print("AUDIT_HOURS", i, "/", (END - START) // 3600, "batch_missing", sum(len(x["missing"]) for x in batch_missing_by_hour), flush=True)
+    with ThreadPoolExecutor(max_workers=24) as ex:
+        futs = [ex.submit(audit_hour, h) for h in hours]
+        for f in as_completed(futs):
+            h, wanted, slugs, miss, returned = f.result()
+            expected.extend(wanted)
+            batch_seen |= slugs
+            missing.extend(miss)
+            if miss:
+                missing_by_hour.append({
+                    "hour": h,
+                    "hour_iso": iso(h),
+                    "missing": [x[0] for x in miss],
+                    "returned": returned,
+                })
 
-    missing = [(slug, a, t0) for slug, a, t0 in expected if slug not in batch_seen]
+    missing_by_hour.sort(key=lambda x: x["hour"])
+    missing = sorted(set(missing), key=lambda x: (x[2], x[1]))
     print("BATCH_SUMMARY", json.dumps({
+        "window": [iso(START), iso(END)],
         "expected": len(expected),
         "seen": len(batch_seen),
         "missing": len(missing),
-        "missing_by_hour": batch_missing_by_hour,
+        "missing_by_hour": missing_by_hour,
     }, ensure_ascii=False, indent=2), flush=True)
 
     details = []
-    for slug, asset, t0 in missing:
-        q_any = get(sess, "/markets", [("slug", slug), ("limit", 20)])
-        q_closed = get(sess, "/markets", [("slug", slug), ("closed", "true"), ("limit", 20)])
-        q_open = get(sess, "/markets", [("slug", slug), ("closed", "false"), ("limit", 20)])
-        # Check nearest canonical 5m slugs for the same asset to distinguish a genuine listing gap
-        neighbors = []
-        for dt in (-600, -300, 300, 600):
-            nslug = f"{asset.lower()}-updown-5m-{t0 + dt}"
-            qn = get(sess, "/markets", [("slug", nslug), ("limit", 5)])
-            neighbors.append({"dt": dt, "slug": nslug, "count": len(qn)})
-        d = {
-            "slug": slug,
-            "asset": asset,
-            "start": t0,
-            "start_iso": iso(t0),
-            "single_any_count": len(q_any),
-            "single_closed_count": len(q_closed),
-            "single_open_count": len(q_open),
-            "single_any": [{
-                "slug": x.get("slug"),
-                "conditionId": x.get("conditionId"),
-                "closed": x.get("closed"),
-                "active": x.get("active"),
-                "archived": x.get("archived"),
-                "question": x.get("question"),
-            } for x in q_any],
-            "neighbors": neighbors,
-        }
-        details.append(d)
-        print("MISSING_DETAIL", json.dumps(d, ensure_ascii=False), flush=True)
-        time.sleep(0.03)
+    with ThreadPoolExecutor(max_workers=12) as ex:
+        futs = {ex.submit(audit_missing, x): x for x in missing}
+        for f in as_completed(futs):
+            d = f.result()
+            details.append(d)
+            print("MISSING_DETAIL", json.dumps(d, ensure_ascii=False), flush=True)
 
+    details.sort(key=lambda d: (d["start"], d["asset"]))
     recovered = [d for d in details if d["single_any_count"] > 0]
     genuine = [d for d in details if d["single_any_count"] == 0]
     print("FINAL", json.dumps({
