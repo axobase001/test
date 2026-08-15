@@ -1,0 +1,43 @@
+name: main-sequence-trent-event-reconstruction
+
+on:
+  push:
+    branches: [ main-sequence-v1-trent-contract-20260816 ]
+    paths:
+      - 'main_sequence/trent_event_reconstruction.py'
+      - '.github/workflows/main-sequence-trent-event-reconstruction.yml'
+
+permissions:
+  contents: read
+
+env:
+  PYTHONUNBUFFERED: '1'
+  HF_HUB_DISABLE_TELEMETRY: '1'
+
+jobs:
+  reconstruct-one-episode:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install audit stack
+        run: python -m pip install huggingface_hub pandas pyarrow numpy
+      - name: Replay event stream against level-0 truth
+        run: |
+          python main_sequence/trent_event_reconstruction.py \
+            --out trent_event_reconstruction \
+            --cache trent_event_cache
+      - name: Show result
+        if: always()
+        run: test ! -f trent_event_reconstruction/trent_event_reconstruction.json || python -m json.tool trent_event_reconstruction/trent_event_reconstruction.json
+      - name: Upload result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: main-sequence-trent-event-reconstruction
+          path: trent_event_reconstruction/
+          if-no-files-found: warn
+          retention-days: 14
