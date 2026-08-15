@@ -6,6 +6,7 @@ on:
     paths:
       - 'pm_structural/recalc.py'
       - 'main_sequence/original_93d_tape_replay.py'
+      - 'main_sequence/original_93d_anchor_freeze.py'
       - '.github/workflows/main-sequence-original-93d-tape.yml'
 
 permissions:
@@ -30,9 +31,12 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install 'honest-backtest[parquet]==0.2.0' requests scipy pandas pyarrow numpy
       - name: Syntax gate
-        run: python -m py_compile main_sequence/original_93d_tape_replay.py pm_structural/recalc.py
+        run: |
+          python -m py_compile main_sequence/original_93d_tape_replay.py
+          python -m py_compile main_sequence/original_93d_anchor_freeze.py
+          python -m py_compile pm_structural/recalc.py
       - name: Freeze original finance anchors and contract
-        run: python main_sequence/original_93d_tape_replay.py anchors --out original93_anchors
+        run: python main_sequence/original_93d_anchor_freeze.py
       - name: Show frozen contract
         if: always()
         run: test ! -f original93_anchors/FROZEN_CONTRACT.json || cat original93_anchors/FROZEN_CONTRACT.json
