@@ -5,6 +5,7 @@ on:
     branches: [ main ]
     paths:
       - 'main_sequence/prejuly_5m_multiasset.py'
+      - 'main_sequence/prejuly_5m_causal_runner.py'
       - '.github/workflows/main-sequence-prejuly5m.yml'
 
 permissions:
@@ -30,10 +31,12 @@ jobs:
           python -m pip install --index-url https://download.pytorch.org/whl/cpu torch
           python -m pip install pandas pyarrow numpy scipy duckdb huggingface_hub
       - name: Syntax gate
-        run: python -m py_compile main_sequence/prejuly_5m_multiasset.py
+        run: |
+          python -m py_compile main_sequence/prejuly_5m_multiasset.py
+          python -m py_compile main_sequence/prejuly_5m_causal_runner.py
       - name: Train only on pre-July data and freeze
         run: |
-          python main_sequence/prejuly_5m_multiasset.py train \
+          python main_sequence/prejuly_5m_causal_runner.py train \
             --out prejuly5m_train \
             --cache prejuly5m_cache
       - name: Show frozen contract
@@ -82,7 +85,7 @@ jobs:
           PY
       - name: Open July 1-14 exactly once
         run: |
-          python main_sequence/prejuly_5m_multiasset.py test \
+          python main_sequence/prejuly_5m_causal_runner.py test \
             --model-dir frozen_prejuly5m \
             --out prejuly5m_july_test \
             --cache july_test_cache
