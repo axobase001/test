@@ -98,13 +98,14 @@ def build_anchors_causal(start: str, end: str, out: Path):
     return bn, der, meta
 
 
-# Pace Data-API requests below the public burst limit. The old transport already
-# retries 429/5xx; this limiter prevents normal concurrency from manufacturing
-# avoidable 429 gaps in busy months.
+# Pace Data-API requests conservatively per runner. The workflow caps scoring
+# concurrency so aggregate request pressure also stays bounded. The old
+# transport already retries 429/5xx; this limiter prevents normal concurrency
+# from manufacturing avoidable 429 gaps in busy months.
 _ORIG_GET_JSON = base.get_json
 _PM_LOCK = threading.Lock()
 _PM_LAST = 0.0
-_PM_MIN_INTERVAL = 0.12  # <= 8.34 requests/sec per runner
+_PM_MIN_INTERVAL = 0.25  # <= 4 requests/sec per runner
 
 
 def paced_get_json(sess, url: str, *, params=None, timeout=60, tries=7):
