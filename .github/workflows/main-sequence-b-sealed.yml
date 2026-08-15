@@ -1,0 +1,123 @@
+name: main-sequence-b-sealed
+
+on:
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'main_sequence/prejuly_5m_official.py'
+      - 'main_sequence/prejuly_5m_official_retryfix.py'
+      - 'main_sequence/prejuly_5m_official_sealed.py'
+      - 'main_sequence/prejuly_5m_official_stream.py'
+      - 'main_sequence/prejuly_5m_official_final.py'
+      - 'main_sequence/prejuly_5m_official_release.py'
+      - '.github/workflows/main-sequence-b-sealed.yml'
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  PYTHONUNBUFFERED: '1'
+
+jobs:
+  freeze-prejuly:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install stack
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --index-url https://download.pytorch.org/whl/cpu torch
+          python -m pip install numpy pandas scipy requests
+      - name: Syntax gate
+        run: |
+          python -m py_compile main_sequence/prejuly_5m_official.py
+          python -m py_compile main_sequence/prejuly_5m_official_retryfix.py
+          python -m py_compile main_sequence/prejuly_5m_official_sealed.py
+          python -m py_compile main_sequence/prejuly_5m_official_stream.py
+          python -m py_compile main_sequence/prejuly_5m_official_final.py
+          python -m py_compile main_sequence/prejuly_5m_official_release.py
+      - name: June exact-equivalence gate
+        run: python main_sequence/prejuly_5m_official_release.py equiv
+      - name: Train pre-July only and freeze
+        run: |
+          python main_sequence/prejuly_5m_official_release.py train \
+            --out main_sequence_b_train
+      - name: Show frozen contract and train summary
+        if: always()
+        run: |
+          if [ -f main_sequence_b_train/FROZEN_CONTRACT.json ]; then python -m json.tool main_sequence_b_train/FROZEN_CONTRACT.json; fi
+          if [ -f main_sequence_b_train/train_summary.json ]; then python -m json.tool main_sequence_b_train/train_summary.json; fi
+      - name: Upload frozen train artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: main-sequence-b-frozen
+          path: main_sequence_b_train/
+          if-no-files-found: error
+          retention-days: 14
+
+  sealed-july-test:
+    needs: freeze-prejuly
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install stack
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --index-url https://download.pytorch.org/whl/cpu torch
+          python -m pip install numpy pandas scipy requests
+      - name: Download frozen artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: main-sequence-b-frozen
+          path: frozen_b
+      - name: Verify sealed contract before opening July
+        run: |
+          python - <<'PY'
+          import json
+          p=json.load(open('frozen_b/FROZEN_CONTRACT.json'))
+          assert p['train']==['2026-06-01','2026-06-24']
+          assert p['validation']==['2026-06-24','2026-07-01']
+          assert p['sealed_test']==['2026-07-01','2026-07-15']
+          assert p['assets']==['BTC','ETH','SOL','XRP']
+          assert p['decision_s2c']==60
+          assert p['edge_floor']==0.03
+          assert p['limit_slip']==0.02
+          assert p['tape_seconds']==5
+          assert p['residual_bound']==0.50
+          assert p['hard_anchor'].startswith('finance_p: causal Binance')
+          assert p['pm_last_role'].startswith('microstructure feature')
+          assert p['transport'].startswith('per-5m-slot start..decision+5s')
+          ec=p['evaluation_contract']
+          assert ec['primary_probability_comparator']=='finance_p hard anchor'
+          assert ec['secondary_probability_comparator'].startswith('PM last pre-decision trade')
+          assert ec['execution_role'].startswith('5-second public taker-BUY tape proxy')
+          print('SEALED_CONTRACT_OK')
+          PY
+      - name: Open complete July 1-14 once and score frozen model
+        run: |
+          python main_sequence/prejuly_5m_official_release.py test \
+            --model-dir frozen_b \
+            --out main_sequence_b_july_test
+      - name: Show sealed test result
+        if: always()
+        run: |
+          if [ -f main_sequence_b_july_test/SUMMARY.md ]; then cat main_sequence_b_july_test/SUMMARY.md; fi
+          if [ -f main_sequence_b_july_test/test_summary.json ]; then python -m json.tool main_sequence_b_july_test/test_summary.json; fi
+      - name: Upload sealed result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: main-sequence-b-july-sealed
+          path: main_sequence_b_july_test/
+          if-no-files-found: warn
+          retention-days: 14
