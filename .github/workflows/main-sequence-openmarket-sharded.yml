@@ -1,0 +1,181 @@
+name: main-sequence-openmarket-sharded
+
+on:
+  push:
+    branches: [ main-sequence-openmarket-sharded-20260816 ]
+    paths:
+      - '.github/workflows/main-sequence-openmarket-sharded.yml'
+      - 'pm_structural/openmarket_strict_v2.py'
+      - 'pm_structural/openmarket_strict.py'
+      - 'pm_structural/obadiaha_strict.py'
+      - 'pm_structural/recalc.py'
+      - 'pm_structural/time_units.py'
+      - 'main_sequence/bankroll.py'
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  PYTHONUNBUFFERED: '1'
+  HF_HUB_DISABLE_TELEMETRY: '1'
+
+jobs:
+  shard:
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        day:
+          - '2026-03-02'
+          - '2026-03-03'
+          - '2026-03-04'
+          - '2026-03-05'
+          - '2026-03-06'
+          - '2026-03-07'
+          - '2026-03-08'
+          - '2026-03-09'
+          - '2026-03-10'
+          - '2026-03-11'
+          - '2026-03-15'
+          - '2026-03-16'
+          - '2026-03-17'
+          - '2026-03-18'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install replay stack
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install 'honest-backtest[parquet]==0.2.0' huggingface_hub requests scipy pandas pyarrow numpy
+      - name: Run one-day immutable OpenMarket strict replay
+        run: |
+          DAY='${{ matrix.day }}'
+          OUT="shard_${DAY}"
+          PYTHONPATH=. python pm_structural/openmarket_strict_v2.py \
+            --out "$OUT" \
+            --cache "cache_${DAY}" \
+            --start "$DAY" \
+            --end "$DAY" \
+            --threshold 0.03 \
+            --grid-ms 1000 \
+            --max-quote-age-ms 2000 \
+            --max-spot-age-ms 2000 \
+            --latency-ms 1000 \
+            --tape-window-ms 15000 \
+            --base-stake 5
+      - name: Show shard result
+        if: always()
+        run: |
+          DAY='${{ matrix.day }}'
+          test ! -f "shard_${DAY}/summary.json" || python -m json.tool "shard_${DAY}/summary.json"
+      - name: Upload shard
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: openmarket-shard-${{ matrix.day }}
+          path: shard_${{ matrix.day }}/
+          if-no-files-found: warn
+          retention-days: 14
+
+  aggregate:
+    needs: shard
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install aggregate stack
+        run: python -m pip install pandas numpy
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: openmarket-shard-*
+          path: shards
+      - name: Aggregate completed daily shards honestly
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import json
+          import numpy as np
+          import pandas as pd
+
+          root = Path('shards')
+          out = Path('combined'); out.mkdir(exist_ok=True)
+          fpaths = sorted(root.glob('openmarket-shard-*/fills_openmarket_strict.csv'))
+          spaths = sorted(root.glob('openmarket-shard-*/signals_openmarket_strict.csv'))
+          jpaths = sorted(root.glob('openmarket-shard-*/summary.json'))
+
+          fills = pd.concat([pd.read_csv(p) for p in fpaths], ignore_index=True) if fpaths else pd.DataFrame()
+          sigs = pd.concat([pd.read_csv(p) for p in spaths], ignore_index=True) if spaths else pd.DataFrame()
+          if len(fills): fills = fills.sort_values(['ts_ms','cid']).reset_index(drop=True)
+          if len(sigs): sigs = sigs.sort_values(['ts_ms','cid']).reset_index(drop=True)
+          fills.to_csv(out/'fills_openmarket_strict_combined.csv', index=False)
+          sigs.to_csv(out/'signals_openmarket_strict_combined.csv', index=False)
+
+          shard_summaries = []
+          for p in jpaths:
+              try: shard_summaries.append(json.loads(p.read_text()))
+              except Exception: pass
+          completed = sorted({s.get('headline_period',[None])[0] for s in shard_summaries if s.get('headline_period')})
+          requested = ['2026-03-02','2026-03-03','2026-03-04','2026-03-05','2026-03-06','2026-03-07','2026-03-08','2026-03-09','2026-03-10','2026-03-11','2026-03-15','2026-03-16','2026-03-17','2026-03-18']
+          missing_or_failed = sorted(set(requested)-set(completed))
+
+          total_stake = float(fills['base_stake'].sum()) if len(fills) and 'base_stake' in fills else 0.0
+          total_pnl = float(fills['base_pnl'].sum()) if len(fills) and 'base_pnl' in fills else 0.0
+          wins = int((fills['payout_per_net_share'] > 0.5).sum()) if len(fills) else 0
+          losses = int((fills['payout_per_net_share'] < 0.5).sum()) if len(fills) else 0
+
+          ci = None
+          if len(fills):
+              x=fills.copy(); x['day']=pd.to_datetime(x.ts_ms,unit='ms',utc=True).dt.date.astype(str)
+              a=x.groupby('day',as_index=False).agg(pnl=('base_pnl','sum'),stake=('base_stake','sum'))
+              if len(a)>=2:
+                  rng=np.random.default_rng(20260816); vals=[]
+                  for _ in range(20000):
+                      j=rng.integers(0,len(a),size=len(a)); vals.append(float(a.pnl.to_numpy()[j].sum()/a.stake.to_numpy()[j].sum()))
+                  ci=[float(np.quantile(vals,.025)),float(np.quantile(vals,.975))]
+
+          summary={
+            'classification':'STRICT_TAPE_OPENMARKET_TOPDEPTH_GRID1S_V1_ONCHAIN_FEE_SHARDED',
+            'period':['2026-03-02','2026-03-18'],
+            'known_source_gap_dates':['2026-03-12','2026-03-13','2026-03-14'],
+            'requested_available_dates':requested,
+            'completed_dates':completed,
+            'missing_or_failed_dates':missing_or_failed,
+            'signals':int(len(sigs)),
+            'strict_base_fills':int(len(fills)),
+            'wins':wins,'losses':losses,
+            'base_total_stake':total_stake,
+            'base_total_pnl':total_pnl,
+            'base_fee_adjusted_roi':(total_pnl/total_stake if total_stake else None),
+            'day_cluster_95ci_roi':ci,
+            'boundary':'Only completed immutable daily shards are aggregated. Known OpenMarket source gaps 2026-03-12..14 are excluded, not imputed.'
+          }
+          (out/'summary.json').write_text(json.dumps(summary,indent=2))
+          print(json.dumps(summary,indent=2))
+          PY
+      - name: Replay causal bankroll over combined strict fills
+        if: always()
+        run: |
+          if [ -s combined/fills_openmarket_strict_combined.csv ]; then
+            python main_sequence/bankroll.py \
+              --fills combined/fills_openmarket_strict_combined.csv \
+              --out combined/bankroll \
+              --initial 50 --base-trade 5 --single-cap 100 --market-cap 200
+          fi
+          test ! -f combined/bankroll/bankroll_summary.json || python -m json.tool combined/bankroll/bankroll_summary.json
+      - name: Upload combined result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: openmarket-sharded-combined
+          path: combined/
+          if-no-files-found: warn
+          retention-days: 14
