@@ -7,6 +7,8 @@ on:
       - 'main_sequence/prejuly_5m_official.py'
       - 'main_sequence/prejuly_5m_official_retryfix.py'
       - 'main_sequence/prejuly_5m_official_sealed.py'
+      - 'main_sequence/prejuly_5m_official_stream.py'
+      - 'main_sequence/prejuly_5m_official_final.py'
       - '.github/workflows/main-sequence-b-sealed.yml'
 
 permissions:
@@ -35,9 +37,13 @@ jobs:
           python -m py_compile main_sequence/prejuly_5m_official.py
           python -m py_compile main_sequence/prejuly_5m_official_retryfix.py
           python -m py_compile main_sequence/prejuly_5m_official_sealed.py
+          python -m py_compile main_sequence/prejuly_5m_official_stream.py
+          python -m py_compile main_sequence/prejuly_5m_official_final.py
+      - name: June exact-equivalence gate
+        run: python main_sequence/prejuly_5m_official_final.py equiv
       - name: Train pre-July only and freeze
         run: |
-          python main_sequence/prejuly_5m_official_sealed.py train \
+          python main_sequence/prejuly_5m_official_final.py train \
             --out main_sequence_b_train
       - name: Show frozen contract and train summary
         if: always()
@@ -88,11 +94,12 @@ jobs:
           assert p['residual_bound']==0.50
           assert p['hard_anchor'].startswith('finance_p: causal Binance')
           assert p['pm_last_role'].startswith('microstructure feature')
+          assert p['transport'].startswith('per-5m-slot start..decision+5s')
           print('SEALED_CONTRACT_OK')
           PY
       - name: Open July 1-14 once and score frozen model
         run: |
-          python main_sequence/prejuly_5m_official_sealed.py test \
+          python main_sequence/prejuly_5m_official_final.py test \
             --model-dir frozen_b \
             --out main_sequence_b_july_test
       - name: Show sealed test result
