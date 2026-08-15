@@ -33,23 +33,46 @@ url="https://r2v2.pmxt.dev/polymarket_orderbook_2026-06-25T12.parquet"
 con=duckdb.connect()
 con.execute("INSTALL httpfs; LOAD httpfs;")
 print("SCHEMA",con.execute("DESCRIBE SELECT * FROM read_parquet(?)",[url]).fetchall(),flush=True)
+print("FILE_TIME",con.execute("SELECT min(epoch_ms(timestamp_received)),max(epoch_ms(timestamp_received)),count(*) FROM read_parquet(?)",[url]).fetchone(),flush=True)
 
-# asset_id is a documented exact-match fast predicate and avoids any BLOB representation ambiguity on market.
-expr=",".join("?" for _ in tokens)
-q=f"""SELECT event_type,count(*) n,min(timestamp_received),max(timestamp_received),count(distinct market),count(distinct asset_id)
-FROM read_parquet(?) WHERE asset_id IN ({expr}) GROUP BY event_type ORDER BY event_type"""
-t0=time.time(); rows=con.execute(q,[url,*tokens]).fetchall(); dt=time.time()-t0
-print("TOKEN_RESULT",rows,flush=True); print("TOKEN_SECONDS",round(dt,3),flush=True)
+# pmxt stores condition IDs as raw bytes, not ASCII "0x..." strings. Compare by hex/raw bytes.
+hexes=[x[2:].upper() for x in cids]
+expr=",".join("?" for _ in hexes)
+q=f"""SELECT event_type,count(*) n,count(distinct market),count(distinct asset_id)
+FROM read_parquet(?) WHERE hex(market) IN ({expr}) GROUP BY event_type ORDER BY event_type"""
+t0=time.time(); rows=con.execute(q,[url,*hexes]).fetchall(); print("MARKET_HEX_RESULT",rows,"seconds",round(time.time()-t0,3),flush=True)
 
-# Diagnose market BLOB representation separately; not needed by the production path if token filtering works.
-print("BLOB_SAMPLE",con.execute("SELECT decode(market),hex(market),asset_id,event_type,timestamp_received FROM read_parquet(?) LIMIT 5",[url]).fetchall(),flush=True)
-cid=cids[0]
-q2="SELECT count(*) FROM read_parquet(?) WHERE decode(market)=?"
-t0=time.time(); print("DECODE_CID_COUNT",con.execute(q2,[url,cid]).fetchone()[0],"seconds",round(time.time()-t0,3),flush=True)
+# Token-ID predicate is independently useful if historical Gamma token IDs match the archive.
+expr2=",".join("?" for _ in tokens)
+q2=f"""SELECT event_type,count(*) n,count(distinct market),count(distinct asset_id)
+FROM read_parquet(?) WHERE asset_id IN ({expr2}) GROUP BY event_type ORDER BY event_type"""
+t0=time.time(); rows2=con.execute(q2,[url,*tokens]).fetchall(); print("TOKEN_RESULT",rows2,"seconds",round(time.time()-t0,3),flush=True)
 
-# Sample exact target rows around one outcome token so quote/trade field semantics are visible.
-tok=tokens[0]
-rows=con.execute("""SELECT timestamp_received,event_type,asset_id,price,size,side,best_bid,best_ask,bids,asks
-FROM read_parquet(?) WHERE asset_id=? ORDER BY timestamp_received LIMIT 20""",[url,tok]).fetchall()
-print("SAMPLE_ROWS",len(rows),flush=True)
-for x in rows[:10]: print(x,flush=True)
+# Inspect actual archive IDs without converting TIMESTAMPTZ through Python/pytz.
+samples=con.execute("""SELECT hex(market) AS market_hex, asset_id, event_type,
+                              epoch_ms(timestamp_received) AS recv_ms,
+                              CAST(price AS VARCHAR), CAST(size AS VARCHAR), side,
+                              CAST(best_bid AS VARCHAR), CAST(best_ask AS VARCHAR)
+                       FROM read_parquet(?)
+                       WHERE event_type IN ('book','price_change','last_trade_price')
+                       LIMIT 12""",[url]).fetchall()
+print("ARCHIVE_SAMPLE_ROWS",len(samples),flush=True)
+for row in samples: print(row,flush=True)
+
+# Ask Gamma what a few archive condition IDs are; this diagnoses historical-ID mismatch vs file coverage.
+seen=[]
+for row in samples:
+    cid='0x'+str(row[0]).lower()
+    if cid not in seen: seen.append(cid)
+for cid in seen[:4]:
+    r=s.get("https://gamma-api.polymarket.com/markets",params=[("condition_ids",cid),("closed","true"),("limit",5)],timeout=30)
+    r.raise_for_status(); js=r.json()
+    print("ARCHIVE_GAMMA",cid,[{k:m.get(k) for k in ["slug","conditionId","outcomes","clobTokenIds"]} for m in js[:3]],flush=True)
+
+# Exact target spot-check using raw hex comparison.
+target=hexes[0]
+spot=con.execute("""SELECT epoch_ms(timestamp_received),event_type,asset_id,CAST(price AS VARCHAR),CAST(size AS VARCHAR),side,
+                           CAST(best_bid AS VARCHAR),CAST(best_ask AS VARCHAR),bids,asks
+                    FROM read_parquet(?) WHERE hex(market)=? ORDER BY timestamp_received LIMIT 20""",[url,target]).fetchall()
+print("TARGET_ROWS",len(spot),flush=True)
+for row in spot[:10]: print(row,flush=True)
