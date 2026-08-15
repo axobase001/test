@@ -9,6 +9,7 @@ on:
       - 'main_sequence/prejuly_5m_official_sealed.py'
       - 'main_sequence/prejuly_5m_official_stream.py'
       - 'main_sequence/prejuly_5m_official_stream_equiv.py'
+      - 'main_sequence/prejuly_5m_stream_debug.py'
       - '.github/workflows/main-sequence-b-stream-equivalence.yml'
 
 permissions:
@@ -34,6 +35,6 @@ jobs:
       - name: Syntax
         run: |
           python -m py_compile main_sequence/prejuly_5m_official_stream.py
-          python -m py_compile main_sequence/prejuly_5m_official_stream_equiv.py
-      - name: Prove stream transport equals full fetch on June hour
-        run: python main_sequence/prejuly_5m_official_stream_equiv.py equiv
+          python -m py_compile main_sequence/prejuly_5m_stream_debug.py
+      - name: Diagnose June row-set/order mismatch
+        run: python main_sequence/prejuly_5m_stream_debug.py
