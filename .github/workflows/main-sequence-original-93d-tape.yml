@@ -14,6 +14,7 @@ permissions:
 
 env:
   PYTHONUNBUFFERED: '1'
+  PYTHONPATH: '.'
 
 jobs:
   freeze-anchors:
