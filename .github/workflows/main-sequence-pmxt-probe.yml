@@ -8,6 +8,7 @@ on:
       - 'main_sequence/clob_history_probe.py'
       - 'main_sequence/data_api_speed_probe.py'
       - 'main_sequence/data_api_split_probe.py'
+      - 'main_sequence/data_api_slot_probe.py'
       - '.github/workflows/main-sequence-pmxt-probe.yml'
 
 permissions:
@@ -32,3 +33,5 @@ jobs:
         run: python main_sequence/data_api_speed_probe.py
       - name: Measure recursive Data API split throughput on June only
         run: python main_sequence/data_api_split_probe.py
+      - name: Probe exact T-120 to T+5 slotwise retrieval on June only
+        run: python main_sequence/data_api_slot_probe.py
