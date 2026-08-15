@@ -1,0 +1,43 @@
+name: main-sequence-trent-contract
+
+on:
+  push:
+    branches: [ main-sequence-v1-trent-contract-20260816 ]
+    paths:
+      - 'main_sequence/trent_feature_contract.py'
+      - '.github/workflows/main-sequence-trent-contract.yml'
+
+permissions:
+  contents: read
+
+env:
+  PYTHONUNBUFFERED: '1'
+  HF_HUB_DISABLE_TELEMETRY: '1'
+
+jobs:
+  trent-v1-feature-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install audit stack
+        run: python -m pip install huggingface_hub pandas pyarrow numpy
+      - name: Verify BBO/top-size mapping and recurrent cadence
+        run: |
+          PYTHONPATH=. python main_sequence/trent_feature_contract.py \
+            --out trent_v1_contract \
+            --cache trent_v1_contract_cache
+      - name: Show contract audit
+        if: always()
+        run: test ! -f trent_v1_contract/trent_feature_contract.json || python -m json.tool trent_v1_contract/trent_feature_contract.json
+      - name: Upload contract audit
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: main-sequence-trent-v1-contract
+          path: trent_v1_contract/
+          if-no-files-found: warn
+          retention-days: 14
