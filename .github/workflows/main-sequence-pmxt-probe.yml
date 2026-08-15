@@ -6,6 +6,7 @@ on:
     paths:
       - 'main_sequence/pmxt_probe.py'
       - 'main_sequence/clob_history_probe.py'
+      - 'main_sequence/data_api_speed_probe.py'
       - '.github/workflows/main-sequence-pmxt-probe.yml'
 
 permissions:
@@ -26,3 +27,5 @@ jobs:
         run: python main_sequence/pmxt_probe.py
       - name: Probe official CLOB historical endpoints on June only
         run: python main_sequence/clob_history_probe.py
+      - name: Measure official Data API throughput on June only
+        run: python main_sequence/data_api_speed_probe.py
