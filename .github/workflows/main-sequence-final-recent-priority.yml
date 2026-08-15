@@ -1,0 +1,11 @@
+name: main-sequence-final-recent-priority
+
+on:
+  workflow_dispatch:
+
+jobs:
+  retired:
+    if: ${{ false }}
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo 'Retired. Use main-sequence-final-v3-no-lookahead.'
