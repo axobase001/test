@@ -1,8 +1,6 @@
 name: main-sequence-v4-hourly-3m
 
 on:
-  push:
-    branches: [main-sequence-v4-immediate-fill-1h-20260816]
   workflow_dispatch:
 
 permissions:
