@@ -1,0 +1,1 @@
+Frozen V4 BTC15m one-level immediate replay trigger. No strategy parameters changed.
