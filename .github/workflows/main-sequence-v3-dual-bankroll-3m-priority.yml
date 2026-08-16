@@ -1,0 +1,76 @@
+name: main-sequence-v3-dual-bankroll-3m-priority
+
+on:
+  push:
+    branches: [main-sequence-v3-dual-bankroll-3m-priority-20260816]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PYTHONUNBUFFERED: "1"
+  PYTHONPATH: "."
+
+jobs:
+  score-recent:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        include:
+          - { shard: may_b, start: "2026-05-15", end: "2026-06-01" }
+          - { shard: jun_a, start: "2026-06-01", end: "2026-06-16" }
+          - { shard: jun_b, start: "2026-06-16", end: "2026-07-01" }
+          - { shard: jul_a, start: "2026-07-01", end: "2026-07-16" }
+          - { shard: jul_b, start: "2026-07-16", end: "2026-08-01" }
+          - { shard: aug_2026, start: "2026-08-01", end: "2026-08-15" }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install stack
+        run: python -m pip install 'honest-backtest[parquet]==0.2.0' requests scipy pandas pyarrow numpy
+      - name: Score recent exact-dollar dual sleeve
+        run: |
+          python main_sequence/final_v3_dual_bankroll_cap200_no_lookahead.py score \
+            --start '${{ matrix.start }}' --end '${{ matrix.end }}' \
+            --shard '${{ matrix.shard }}' --out 'recent_${{ matrix.shard }}' --workers 4
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: main-sequence-v3-dual-3m-${{ matrix.shard }}
+          path: |
+            recent_${{ matrix.shard }}/tiered_records.csv
+            recent_${{ matrix.shard }}/market_inventory.csv
+            recent_${{ matrix.shard }}/summary.json
+          if-no-files-found: warn
+          retention-days: 14
+
+  aggregate-3m:
+    needs: score-recent
+    if: always() && needs.score-recent.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install stack
+        run: python -m pip install 'honest-backtest[parquet]==0.2.0' requests scipy pandas pyarrow numpy
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: main-sequence-v3-dual-3m-*
+          path: recent_shards
+          merge-multiple: false
+      - name: Aggregate 3m bankroll
+        run: python main_sequence/final_v3_dual_bankroll_cap200_no_lookahead.py aggregate --root recent_shards --out recent_aggregate
+      - uses: actions/upload-artifact@v4
+        with:
+          name: main-sequence-v3-dual-3m-aggregate
+          path: recent_aggregate
+          retention-days: 14
