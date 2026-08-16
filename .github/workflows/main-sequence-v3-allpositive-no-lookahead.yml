@@ -1,0 +1,157 @@
+name: main-sequence-v3-allpositive-no-lookahead
+
+on:
+  push:
+    branches:
+      - main-sequence-v3-allpositive-no-lookahead-20260816
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: main-sequence-v3-allpositive-no-lookahead-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  PYTHONUNBUFFERED: "1"
+  PYTHONPATH: "."
+
+jobs:
+  freeze-protocol:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install stack
+        run: python -m pip install 'honest-backtest[parquet]==0.2.0' requests scipy pandas pyarrow numpy
+      - name: Syntax gate
+        run: python -m py_compile main_sequence/final_recent_replay.py main_sequence/final_recent_no_lookahead.py main_sequence/final_v3_allpositive_no_lookahead.py
+      - name: Freeze protocol before replay
+        run: python main_sequence/final_v3_allpositive_no_lookahead.py protocol --out allpos_protocol
+      - uses: actions/upload-artifact@v4
+        with:
+          name: main-sequence-v3-allpositive-protocol
+          path: allpos_protocol/FROZEN_FINAL_RECENT_PROTOCOL.json
+          retention-days: 14
+
+  recent:
+    needs: freeze-protocol
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        include:
+          - { shard: may_b, start: "2026-05-15", end: "2026-06-01" }
+          - { shard: jun_a, start: "2026-06-01", end: "2026-06-16" }
+          - { shard: jun_b, start: "2026-06-16", end: "2026-07-01" }
+          - { shard: jul_a, start: "2026-07-01", end: "2026-07-16" }
+          - { shard: jul_b, start: "2026-07-16", end: "2026-08-01" }
+          - { shard: aug_2026, start: "2026-08-01", end: "2026-08-15" }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install stack
+        run: python -m pip install 'honest-backtest[parquet]==0.2.0' requests scipy pandas pyarrow numpy
+      - name: Score causal recent shard
+        run: |
+          python main_sequence/final_v3_allpositive_no_lookahead.py score \
+            --start '${{ matrix.start }}' --end '${{ matrix.end }}' \
+            --shard '${{ matrix.shard }}' --out 'allpos_${{ matrix.shard }}' --workers 4
+      - name: Show shard summary
+        if: always()
+        run: test ! -f 'allpos_${{ matrix.shard }}/summary.json' || cat 'allpos_${{ matrix.shard }}/summary.json'
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: main-sequence-v3-allpositive-shard-${{ matrix.shard }}
+          path: |
+            allpos_${{ matrix.shard }}/dual_exit_records.csv
+            allpos_${{ matrix.shard }}/market_inventory.csv
+            allpos_${{ matrix.shard }}/summary.json
+          if-no-files-found: warn
+          retention-days: 14
+
+  historical:
+    needs: freeze-protocol
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        include:
+          - { shard: oct_a, start: "2025-10-01", end: "2025-10-16" }
+          - { shard: oct_b, start: "2025-10-16", end: "2025-11-01" }
+          - { shard: nov_a, start: "2025-11-01", end: "2025-11-15" }
+          - { shard: nov_b, start: "2025-11-15", end: "2025-12-01" }
+          - { shard: dec_a, start: "2025-12-01", end: "2025-12-16" }
+          - { shard: dec_b, start: "2025-12-16", end: "2026-01-01" }
+          - { shard: jan_a, start: "2026-01-01", end: "2026-01-16" }
+          - { shard: jan_b, start: "2026-01-16", end: "2026-02-01" }
+          - { shard: feb_a, start: "2026-02-01", end: "2026-02-15" }
+          - { shard: feb_b, start: "2026-02-15", end: "2026-03-01" }
+          - { shard: mar_a, start: "2026-03-01", end: "2026-03-16" }
+          - { shard: mar_b, start: "2026-03-16", end: "2026-04-01" }
+          - { shard: apr_a, start: "2026-04-01", end: "2026-04-16" }
+          - { shard: apr_b, start: "2026-04-16", end: "2026-05-01" }
+          - { shard: may_a, start: "2026-05-01", end: "2026-05-15" }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install stack
+        run: python -m pip install 'honest-backtest[parquet]==0.2.0' requests scipy pandas pyarrow numpy
+      - name: Score causal historical shard
+        run: |
+          python main_sequence/final_v3_allpositive_no_lookahead.py score \
+            --start '${{ matrix.start }}' --end '${{ matrix.end }}' \
+            --shard '${{ matrix.shard }}' --out 'allpos_${{ matrix.shard }}' --workers 4
+      - name: Show shard summary
+        if: always()
+        run: test ! -f 'allpos_${{ matrix.shard }}/summary.json' || cat 'allpos_${{ matrix.shard }}/summary.json'
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: main-sequence-v3-allpositive-shard-${{ matrix.shard }}
+          path: |
+            allpos_${{ matrix.shard }}/dual_exit_records.csv
+            allpos_${{ matrix.shard }}/market_inventory.csv
+            allpos_${{ matrix.shard }}/summary.json
+          if-no-files-found: warn
+          retention-days: 14
+
+  aggregate:
+    needs: [recent, historical]
+    if: always() && needs.recent.result == 'success' && needs.historical.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install stack
+        run: python -m pip install 'honest-backtest[parquet]==0.2.0' requests scipy pandas pyarrow numpy
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: main-sequence-v3-allpositive-shard-*
+          path: all_allpositive_shards
+          merge-multiple: false
+      - name: Aggregate exact windows
+        run: python main_sequence/final_v3_allpositive_no_lookahead.py aggregate --root all_allpositive_shards --out allpositive_aggregate
+      - name: Show aggregate
+        run: cat allpositive_aggregate/SUMMARY.md && cat allpositive_aggregate/summary.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: main-sequence-v3-allpositive-no-lookahead-aggregate
+          path: |
+            allpositive_aggregate/summary.json
+            allpositive_aggregate/SUMMARY.md
+            allpositive_aggregate/all_records.csv
+            allpositive_aggregate/all_market_inventory.csv
+          retention-days: 14
