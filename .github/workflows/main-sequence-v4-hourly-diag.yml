@@ -1,0 +1,24 @@
+name: main-sequence-v4-hourly-diag
+on:
+  push:
+    branches: [main-sequence-v4-hourly-diag-20260816]
+permissions:
+  contents: read
+env:
+  PYTHONUNBUFFERED: '1'
+  PYTHONPATH: '.'
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: python -m pip install 'honest-backtest[parquet]==0.2.0' requests scipy pandas pyarrow numpy
+      - run: python main_sequence/v4_hourly_diag.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: main-sequence-v4-hourly-diag
+          path: hourly_diag/
+          retention-days: 14
