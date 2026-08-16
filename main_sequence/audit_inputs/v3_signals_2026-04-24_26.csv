@@ -1,0 +1,2 @@
+slug,start,close,decision,s2c,side,won,limit,signal_edge,initial_raw_gap,regime,witness_cost,witness_reward,witness_exit_kind,strict_cost,strict_reward,strict_entry_time,strict_exit_kind,fee_enabled,fee_type,fee_rate,fee_exponent
+btc-updown-15m-1776988800,1776988800,1776989700,1776989230,470,Up,True,0.4499998892,0.0411466294574052,0.0584706294574052,small_settlement,2.336619446,2.663380554,settlement,,,,no_entry_fill,True,crypto_fees_v2,0.07,1.0
