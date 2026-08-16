@@ -1,0 +1,123 @@
+name: main-sequence-v3-dual-bankroll
+
+on:
+  push:
+    branches: [main-sequence-v3-dual-bankroll-20260816]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PYTHONUNBUFFERED: "1"
+  PYTHONPATH: "."
+
+jobs:
+  freeze-protocol:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install stack
+        run: python -m pip install 'honest-backtest[parquet]==0.2.0' requests scipy pandas pyarrow numpy
+      - name: Syntax gate
+        run: python -m py_compile main_sequence/final_v3_dual_bankroll_no_lookahead.py main_sequence/final_recent_no_lookahead.py main_sequence/final_recent_replay.py
+      - name: Freeze bankroll protocol before replay
+        run: python main_sequence/final_v3_dual_bankroll_no_lookahead.py protocol --out frozen_dual_bankroll
+      - uses: actions/upload-artifact@v4
+        with:
+          name: main-sequence-v3-dual-bankroll-protocol
+          path: frozen_dual_bankroll/FROZEN_DUAL_BANKROLL_PROTOCOL.json
+          retention-days: 14
+
+  score-shards:
+    needs: freeze-protocol
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        include:
+          - { shard: oct_a, start: "2025-10-01", end: "2025-10-16" }
+          - { shard: oct_b, start: "2025-10-16", end: "2025-11-01" }
+          - { shard: nov_a, start: "2025-11-01", end: "2025-11-15" }
+          - { shard: nov_b, start: "2025-11-15", end: "2025-12-01" }
+          - { shard: dec_a, start: "2025-12-01", end: "2025-12-16" }
+          - { shard: dec_b, start: "2025-12-16", end: "2026-01-01" }
+          - { shard: jan_a, start: "2026-01-01", end: "2026-01-16" }
+          - { shard: jan_b, start: "2026-01-16", end: "2026-02-01" }
+          - { shard: feb_a, start: "2026-02-01", end: "2026-02-15" }
+          - { shard: feb_b, start: "2026-02-15", end: "2026-03-01" }
+          - { shard: mar_a, start: "2026-03-01", end: "2026-03-16" }
+          - { shard: mar_b, start: "2026-03-16", end: "2026-04-01" }
+          - { shard: apr_a, start: "2026-04-01", end: "2026-04-16" }
+          - { shard: apr_b, start: "2026-04-16", end: "2026-05-01" }
+          - { shard: may_a, start: "2026-05-01", end: "2026-05-15" }
+          - { shard: may_b, start: "2026-05-15", end: "2026-06-01" }
+          - { shard: jun_a, start: "2026-06-01", end: "2026-06-16" }
+          - { shard: jun_b, start: "2026-06-16", end: "2026-07-01" }
+          - { shard: jul_a, start: "2026-07-01", end: "2026-07-16" }
+          - { shard: jul_b, start: "2026-07-16", end: "2026-08-01" }
+          - { shard: aug_2026, start: "2026-08-01", end: "2026-08-15" }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install stack
+        run: python -m pip install 'honest-backtest[parquet]==0.2.0' requests scipy pandas pyarrow numpy
+      - name: Score exact dollar-notional causal shard
+        run: |
+          python main_sequence/final_v3_dual_bankroll_no_lookahead.py score \
+            --start '${{ matrix.start }}' --end '${{ matrix.end }}' \
+            --shard '${{ matrix.shard }}' --out 'dual_${{ matrix.shard }}' --workers 4
+      - name: Show shard summary
+        if: always()
+        run: test ! -f 'dual_${{ matrix.shard }}/summary.json' || cat 'dual_${{ matrix.shard }}/summary.json'
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: main-sequence-v3-dual-bankroll-shard-${{ matrix.shard }}
+          path: |
+            dual_${{ matrix.shard }}/tiered_records.csv
+            dual_${{ matrix.shard }}/market_inventory.csv
+            dual_${{ matrix.shard }}/summary.json
+          if-no-files-found: warn
+          retention-days: 14
+
+  aggregate:
+    needs: score-shards
+    if: always() && needs.score-shards.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install stack
+        run: python -m pip install 'honest-backtest[parquet]==0.2.0' requests scipy pandas pyarrow numpy
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: main-sequence-v3-dual-bankroll-shard-*
+          path: all_dual_shards
+          merge-multiple: false
+      - name: Simulate $50 max-turnover bankroll for 3m/6m/12m
+        run: python main_sequence/final_v3_dual_bankroll_no_lookahead.py aggregate --root all_dual_shards --out dual_bankroll_aggregate
+      - name: Show final result
+        run: cat dual_bankroll_aggregate/SUMMARY.md && cat dual_bankroll_aggregate/summary.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: main-sequence-v3-dual-bankroll-aggregate
+          path: |
+            dual_bankroll_aggregate/summary.json
+            dual_bankroll_aggregate/SUMMARY.md
+            dual_bankroll_aggregate/bankroll_trades.csv
+            dual_bankroll_aggregate/equity_paths.csv
+            dual_bankroll_aggregate/all_tiered_records.csv
+            dual_bankroll_aggregate/all_market_inventory.csv
+          retention-days: 14
