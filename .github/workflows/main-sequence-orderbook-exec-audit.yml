@@ -1,0 +1,49 @@
+name: main-sequence-orderbook-exec-audit
+
+on:
+  push:
+    branches: [main-sequence-orderbook-exec-audit-20260816]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  PYTHONUNBUFFERED: "1"
+  PYTHONPATH: "."
+  GH_TOKEN: ${{ github.token }}
+
+jobs:
+  calibrate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install stack
+        run: python -m pip install requests pandas numpy
+      - name: Fetch frozen canonical V3 aggregate
+        run: |
+          gh api /repos/axobase001/test/actions/artifacts/9254940971/zip > canonical.zip
+          mkdir canonical
+          unzip -q canonical.zip -d canonical
+          find canonical -maxdepth 4 -type f -print
+          SIG=$(find canonical -name all_records.csv -print -quit)
+          test -n "$SIG"
+          cp "$SIG" canonical_all_records.csv
+      - name: Syntax gate
+        run: python -m py_compile main_sequence/audit_orderbook_execution.py
+      - name: Compare real best ask to future-tape strict proxy
+        run: python main_sequence/audit_orderbook_execution.py --signals canonical_all_records.csv --out exec_audit --cache book_cache
+      - name: Show result
+        run: cat exec_audit/summary.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: main-sequence-orderbook-exec-audit-apr24-26
+          path: |
+            exec_audit/summary.json
+            exec_audit/aligned_signals.csv
+          retention-days: 14
