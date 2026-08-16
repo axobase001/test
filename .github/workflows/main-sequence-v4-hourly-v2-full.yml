@@ -1,0 +1,60 @@
+name: main-sequence-v4-hourly-v2-full
+on:
+  push:
+    branches: [main-sequence-v4-hourly-v2-full-20260816]
+permissions:
+  contents: read
+env:
+  PYTHONUNBUFFERED: '1'
+  PYTHONPATH: '.'
+jobs:
+  score:
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        include:
+          - {shard: may_b, start: '2026-05-15', end: '2026-06-01', os: windows-latest}
+          - {shard: jun, start: '2026-06-01', end: '2026-07-01', os: ubuntu-latest}
+          - {shard: jul, start: '2026-07-01', end: '2026-08-01', os: windows-latest}
+          - {shard: aug_a, start: '2026-08-01', end: '2026-08-15', os: ubuntu-latest}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: python -m pip install "honest-backtest[parquet]==0.2.0" requests scipy pandas pyarrow numpy
+      - run: python -m py_compile main_sequence/v4_hourly_core_tail_v2.py
+      - run: python main_sequence/v4_hourly_core_tail_v2.py score --start '${{ matrix.start }}' --end '${{ matrix.end }}' --out 'hourly_${{ matrix.shard }}' --workers 6
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: main-sequence-v4-hourly-v2-${{ matrix.shard }}
+          path: |
+            hourly_${{ matrix.shard }}/market_ticket_results.csv
+            hourly_${{ matrix.shard }}/inventory.csv
+            hourly_${{ matrix.shard }}/summary.json
+          if-no-files-found: warn
+          retention-days: 14
+  aggregate:
+    needs: score
+    if: always() && needs.score.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: python -m pip install "honest-backtest[parquet]==0.2.0" requests scipy pandas pyarrow numpy
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: main-sequence-v4-hourly-v2-*
+          path: hourly_v2_shards
+      - run: python main_sequence/v4_hourly_core_tail_v2.py aggregate --root hourly_v2_shards --out hourly_v2_3m --start 2026-05-15 --end 2026-08-15
+      - run: type hourly_v2_3m\summary.json || cat hourly_v2_3m/summary.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: main-sequence-v4-hourly-v2-3m-aggregate
+          path: hourly_v2_3m/
+          retention-days: 14
