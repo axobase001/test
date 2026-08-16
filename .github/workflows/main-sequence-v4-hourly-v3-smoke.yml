@@ -1,0 +1,38 @@
+name: main-sequence-v4-hourly-v3-smoke
+on:
+  push:
+    branches: [main-sequence-v4-hourly-v3-core-risk-20260816]
+permissions:
+  contents: read
+env:
+  PYTHONUNBUFFERED: '1'
+  PYTHONPATH: '.'
+jobs:
+  smoke:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: python -m pip install "honest-backtest[parquet]==0.2.0" requests scipy pandas pyarrow numpy
+      - run: python -m py_compile main_sequence/v4_hourly_core_tail_v3.py
+      - run: python main_sequence/v4_hourly_core_tail_v3.py score --start 2026-08-01 --end 2026-08-02 --out hourly_v3_smoke --workers 6
+      - shell: python
+        run: |
+          import pandas as pd, json
+          d=pd.read_csv('hourly_v3_smoke/market_ticket_results.csv')
+          z=d[d.ticket==5.0]
+          ev=[]
+          for s in z.events_json:
+              ev.extend(json.loads(s) if isinstance(s,str) else [])
+          counts={}
+          for e in ev:
+              k=f"{e['family']}:{e['event']}"; counts[k]=counts.get(k,0)+1
+          s={'markets':int(z.start.nunique()),'pnl':float(z.pnl.sum()),'turnover':float(z.turnover.sum()),'core_pnl':float(z.core_pnl.sum()),'tail_pnl':float(z.tail_pnl.sum()),'core_entries':int(z.core_entries.sum()),'core_completed':int(z.core_round_trips.sum()),'tail_entries':int(z.tail_entries.sum()),'event_counts':counts}
+          print('SMOKE_V3_RESULT',json.dumps(s,indent=2))
+      - uses: actions/upload-artifact@v4
+        with:
+          name: main-sequence-v4-hourly-v3-smoke
+          path: hourly_v3_smoke/
+          retention-days: 14
