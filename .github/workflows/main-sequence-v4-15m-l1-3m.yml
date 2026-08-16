@@ -1,0 +1,90 @@
+name: main-sequence-v4-15m-l1-3m
+
+on:
+  push:
+    branches: [main-sequence-v4-immediate-fill-1h-20260816]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PYTHONUNBUFFERED: "1"
+  PYTHONPATH: "."
+
+jobs:
+  freeze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: Install
+        run: python -m pip install 'honest-backtest[parquet]==0.2.0' requests scipy pandas pyarrow numpy
+      - name: Syntax gate
+        run: python -m py_compile main_sequence/v4_15m_l1_immediate.py main_sequence/final_v3_dual_bankroll_no_lookahead.py
+      - name: Freeze protocol
+        run: python main_sequence/v4_15m_l1_immediate.py protocol --out frozen_v4_15m
+      - uses: actions/upload-artifact@v4
+        with:
+          name: main-sequence-v4-15m-l1-protocol
+          path: frozen_v4_15m/FROZEN_V4_15M_L1_PROTOCOL.json
+          retention-days: 14
+
+  score:
+    needs: freeze
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        include:
+          - { shard: may_b, start: "2026-05-15", end: "2026-06-01" }
+          - { shard: jun_a, start: "2026-06-01", end: "2026-06-16" }
+          - { shard: jun_b, start: "2026-06-16", end: "2026-07-01" }
+          - { shard: jul_a, start: "2026-07-01", end: "2026-07-16" }
+          - { shard: jul_b, start: "2026-07-16", end: "2026-08-01" }
+          - { shard: aug_a, start: "2026-08-01", end: "2026-08-15" }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: Install
+        run: python -m pip install 'honest-backtest[parquet]==0.2.0' requests scipy pandas pyarrow numpy
+      - name: Score frozen 15m L1 shard
+        run: python main_sequence/v4_15m_l1_immediate.py score --start '${{ matrix.start }}' --end '${{ matrix.end }}' --shard '${{ matrix.shard }}' --out 'l1_${{ matrix.shard }}' --workers 4
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: main-sequence-v4-15m-l1-${{ matrix.shard }}
+          path: |
+            l1_${{ matrix.shard }}/tiered_records.csv
+            l1_${{ matrix.shard }}/market_inventory.csv
+            l1_${{ matrix.shard }}/summary.json
+          if-no-files-found: warn
+          retention-days: 14
+
+  aggregate:
+    needs: score
+    if: always() && needs.score.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: Install
+        run: python -m pip install 'honest-backtest[parquet]==0.2.0' requests scipy pandas pyarrow numpy
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: main-sequence-v4-15m-l1-*
+          path: l1_shards
+      - name: Aggregate recent 3m
+        run: python main_sequence/v4_15m_l1_immediate.py aggregate --root l1_shards --out l1_aggregate
+      - uses: actions/upload-artifact@v4
+        with:
+          name: main-sequence-v4-15m-l1-3m-aggregate
+          path: l1_aggregate/
+          retention-days: 14
