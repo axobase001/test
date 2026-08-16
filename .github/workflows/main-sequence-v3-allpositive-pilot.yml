@@ -1,0 +1,50 @@
+name: main-sequence-v3-allpositive-pilot
+
+on:
+  push:
+    branches:
+      - main-sequence-v3-allpositive-pilot-20260816
+
+permissions:
+  contents: read
+
+env:
+  PYTHONUNBUFFERED: "1"
+  PYTHONPATH: "."
+
+jobs:
+  pilot:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        include:
+          - { shard: jun12_15, start: "2026-06-12", end: "2026-06-15" }
+          - { shard: aug12_15, start: "2026-08-12", end: "2026-08-15" }
+          - { shard: mar12_15, start: "2026-03-12", end: "2026-03-15" }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install stack
+        run: python -m pip install 'honest-backtest[parquet]==0.2.0' requests scipy pandas pyarrow numpy
+      - name: Score strict causal pilot
+        run: |
+          python main_sequence/final_v3_allpositive_no_lookahead.py score \
+            --start '${{ matrix.start }}' --end '${{ matrix.end }}' \
+            --shard '${{ matrix.shard }}' --out 'pilot_${{ matrix.shard }}' --workers 4
+      - name: Show pilot summary
+        if: always()
+        run: test ! -f 'pilot_${{ matrix.shard }}/summary.json' || cat 'pilot_${{ matrix.shard }}/summary.json'
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: main-sequence-v3-allpositive-pilot-${{ matrix.shard }}
+          path: |
+            pilot_${{ matrix.shard }}/dual_exit_records.csv
+            pilot_${{ matrix.shard }}/market_inventory.csv
+            pilot_${{ matrix.shard }}/summary.json
+          if-no-files-found: warn
+          retention-days: 14
