@@ -1,0 +1,38 @@
+name: main-sequence-chainlink-ptb-audit
+
+on:
+  push:
+    branches: [main-sequence-chainlink-ptb-audit-20260816]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PYTHONUNBUFFERED: "1"
+  PYTHONPATH: "."
+
+jobs:
+  jul-b-reference-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install stack
+        run: python -m pip install requests pandas numpy scipy 'honest-backtest[parquet]==0.2.0'
+      - name: Syntax gate
+        run: python -m py_compile main_sequence/audit_chainlink_ptb_vs_binance.py
+      - name: Pull Polymarket Chainlink PTB and compare Binance interval open
+        run: python main_sequence/audit_chainlink_ptb_vs_binance.py --start 2026-07-16 --end 2026-08-01 --out ptb_audit --workers 20
+      - name: Show result
+        run: cat ptb_audit/summary.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: main-sequence-chainlink-ptb-audit-jul-b
+          path: |
+            ptb_audit/ptb_vs_binance.csv
+            ptb_audit/summary.json
+          retention-days: 14
