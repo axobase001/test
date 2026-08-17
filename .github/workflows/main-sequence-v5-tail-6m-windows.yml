@@ -36,9 +36,9 @@ jobs:
       - name: Install
         run: python -m pip install 'honest-backtest[parquet]==0.2.0' requests scipy pandas pyarrow numpy
       - name: Syntax gate
-        run: python -m py_compile main_sequence/v5_tail_only_retry.py main_sequence/v5_tail_only_fast.py main_sequence/v5_hourly_symmetric_stop.py main_sequence/v4_hourly_core_tail.py main_sequence/final_recent_replay.py pm_structural/recalc.py
-      - name: Score 6m bridge TAIL candidates
-        run: python main_sequence/v5_tail_only_retry.py score --start '${{ matrix.start }}' --end '${{ matrix.end }}' --out 'tail_${{ matrix.shard }}' --workers 4
+        run: python -m py_compile main_sequence/v5_tail_only_batched.py main_sequence/v5_tail_only_fast.py main_sequence/v5_hourly_symmetric_stop.py main_sequence/v4_hourly_core_tail.py main_sequence/final_recent_replay.py pm_structural/recalc.py
+      - name: Score 6m bridge TAIL candidates in batched tape mode
+        run: python main_sequence/v5_tail_only_batched.py score --start '${{ matrix.start }}' --end '${{ matrix.end }}' --out 'tail_${{ matrix.shard }}' --workers 8
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -47,7 +47,6 @@ jobs:
             tail_${{ matrix.shard }}/tail_candidates.csv
             tail_${{ matrix.shard }}/inventory.csv
             tail_${{ matrix.shard }}/summary.json
-            tail_${{ matrix.shard }}/retry_history.json
-            tail_${{ matrix.shard }}/retry_failures.json
+            tail_${{ matrix.shard }}/failures.json
           if-no-files-found: warn
           retention-days: 14
