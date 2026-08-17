@@ -1,0 +1,52 @@
+name: main-sequence-v5-tail-mar16-daily
+
+on:
+  push:
+    branches: [main-sequence-v5-symmetric-stop-1h-20260816]
+    paths:
+      - '.github/workflows/main-sequence-v5-tail-mar16-daily.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PYTHONUNBUFFERED: "1"
+  PYTHONPATH: "."
+
+jobs:
+  score:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      max-parallel: 8
+      matrix:
+        include:
+          - { shard: mar16, start: "2026-03-16", end: "2026-03-17" }
+          - { shard: mar17, start: "2026-03-17", end: "2026-03-18" }
+          - { shard: mar18, start: "2026-03-18", end: "2026-03-19" }
+          - { shard: mar19, start: "2026-03-19", end: "2026-03-20" }
+          - { shard: mar20, start: "2026-03-20", end: "2026-03-21" }
+          - { shard: mar21, start: "2026-03-21", end: "2026-03-22" }
+          - { shard: mar22, start: "2026-03-22", end: "2026-03-23" }
+          - { shard: mar23, start: "2026-03-23", end: "2026-03-24" }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: Install
+        run: python -m pip install 'honest-backtest[parquet]==0.2.0' requests scipy pandas pyarrow numpy
+      - name: Score daily TAIL candidates
+        run: python main_sequence/v5_tail_only_batched.py score --start '${{ matrix.start }}' --end '${{ matrix.end }}' --out 'tail_${{ matrix.shard }}' --workers 6
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: main-sequence-v5-tail-daily-${{ matrix.shard }}
+          path: |
+            tail_${{ matrix.shard }}/tail_candidates.csv
+            tail_${{ matrix.shard }}/inventory.csv
+            tail_${{ matrix.shard }}/summary.json
+            tail_${{ matrix.shard }}/failures.json
+          if-no-files-found: warn
+          retention-days: 14
