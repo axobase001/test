@@ -1,0 +1,49 @@
+name: main-sequence-v5-missing-jan-mar-halves
+
+on:
+  push:
+    branches: [main-sequence-v5-symmetric-stop-1h-20260816]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PYTHONUNBUFFERED: "1"
+  PYTHONPATH: "."
+
+jobs:
+  score-missing:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        include:
+          - { shard: jan_a, start: "2026-01-01", end: "2026-01-16" }
+          - { shard: jan_b, start: "2026-01-16", end: "2026-02-01" }
+          - { shard: feb_a, start: "2026-02-01", end: "2026-02-15" }
+          - { shard: feb_b, start: "2026-02-15", end: "2026-03-01" }
+          - { shard: mar_a, start: "2026-03-01", end: "2026-03-16" }
+          - { shard: mar_b, start: "2026-03-16", end: "2026-04-01" }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: Install
+        run: python -m pip install 'honest-backtest[parquet]==0.2.0' requests scipy pandas pyarrow numpy
+      - name: Syntax gate
+        run: python -m py_compile main_sequence/v5_hourly_symmetric_stop.py main_sequence/v4_hourly_core_tail.py main_sequence/final_recent_replay.py pm_structural/recalc.py
+      - name: Build missing V5 causal state shard
+        run: python main_sequence/v5_hourly_symmetric_stop.py score --start '${{ matrix.start }}' --end '${{ matrix.end }}' --out 'v5_${{ matrix.shard }}' --workers 10
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: main-sequence-v5-state-${{ matrix.shard }}
+          path: |
+            v5_${{ matrix.shard }}/state_rows.csv
+            v5_${{ matrix.shard }}/inventory.csv
+            v5_${{ matrix.shard }}/summary.json
+          if-no-files-found: warn
+          retention-days: 14
