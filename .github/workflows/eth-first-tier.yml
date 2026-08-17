@@ -1,0 +1,31 @@
+name: ETH first tier qualification
+
+on:
+  push:
+    branches: [eth-first-tier-20260817]
+    paths:
+      - 'main_sequence/eth_5m_tail_qualification.py'
+      - '.github/workflows/eth-first-tier.yml'
+  workflow_dispatch:
+
+jobs:
+  eth-5m-tail:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install
+        run: python -m pip install --upgrade pip && pip install duckdb pandas numpy scipy huggingface_hub pyarrow torch
+      - name: Run ETH 5m TAIL qualification
+        env:
+          PYTHONPATH: .
+        run: python main_sequence/eth_5m_tail_qualification.py --out artifacts/eth_5m_tail --cache .cache/eth_first_tier
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: eth-5m-tail-qualification
+          path: artifacts/eth_5m_tail
+          if-no-files-found: warn
