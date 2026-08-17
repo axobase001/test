@@ -1,11 +1,6 @@
 name: main-sequence-v5-tail-only-fast
 
 on:
-  push:
-    branches: [main-sequence-v5-symmetric-stop-1h-20260816]
-    paths:
-      - 'main_sequence/v5_tail_only_fast.py'
-      - '.github/workflows/main-sequence-v5-tail-only-fast.yml'
   workflow_dispatch:
 
 permissions:
@@ -46,7 +41,7 @@ jobs:
       - name: Syntax gate
         run: python -m py_compile main_sequence/v5_tail_only_fast.py main_sequence/v5_hourly_symmetric_stop.py main_sequence/v4_hourly_core_tail.py main_sequence/final_recent_replay.py pm_structural/recalc.py
       - name: Score frozen TAIL candidates
-        run: python main_sequence/v5_tail_only_fast.py score --start '${{ matrix.start }}' --end '${{ matrix.end }}' --out 'tail_${{ matrix.shard }}' --workers 12
+        run: python main_sequence/v5_tail_only_fast.py score --start '${{ matrix.start }}' --end '${{ matrix.end }}' --out 'tail_${{ matrix.shard }}' --workers 6
       - uses: actions/upload-artifact@v4
         if: always()
         with:
