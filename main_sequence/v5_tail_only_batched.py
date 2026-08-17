@@ -14,6 +14,9 @@ from main_sequence import v4_hourly_core_tail as v4
 from main_sequence import v5_hourly_symmetric_stop as v5
 from main_sequence import v5_tail_only_fast as fast
 
+MARKET_BATCH = 8
+FETCH_WORKERS = 3
+
 
 def candidates_from_tape(m, g: pd.DataFrame, spot, bn, der):
     if g is None or g.empty:
@@ -45,6 +48,12 @@ def candidates_from_tape(m, g: pd.DataFrame, spot, bn, der):
     return rows
 
 
+def _fetch_market_batch(batch, s0: int, s1: int):
+    sess = requests.Session()
+    sess.headers.update({"User-Agent": "main-sequence-v5-tail-batched/1.1"})
+    return base.query_trade_rows(sess, batch, s0, s1)
+
+
 def score_range(start: str, end: str, out: Path, workers: int):
     out.mkdir(parents=True, exist_ok=True)
     markets, inv = v5.discover(start, end, workers=min(12, max(4, workers)))
@@ -60,10 +69,24 @@ def score_range(start: str, end: str, out: Path, workers: int):
 
     s0 = int(pd.Timestamp(start, tz="UTC").timestamp())
     s1 = int(pd.Timestamp(end, tz="UTC").timestamp()) - 1
-    sess = requests.Session()
-    sess.headers.update({"User-Agent": "main-sequence-v5-tail-batched/1.0"})
-    print("TAIL_BATCH_FETCH", start, end, "markets", len(markets), flush=True)
-    raw = base.query_trade_rows(sess, markets, s0, s1)
+    batches = [markets[i:i + MARKET_BATCH] for i in range(0, len(markets), MARKET_BATCH)]
+    print("TAIL_BATCH_FETCH", start, end, "markets", len(markets), "batches", len(batches), flush=True)
+    raw = []
+    fetch_failures = []
+    with ThreadPoolExecutor(max_workers=FETCH_WORKERS) as ex:
+        fut = {ex.submit(_fetch_market_batch, b, s0, s1): b for b in batches}
+        for i, f in enumerate(as_completed(fut), 1):
+            b = fut[f]
+            try:
+                raw.extend(f.result())
+            except Exception as exc:
+                fetch_failures.append({"condition_ids": [m.condition_id for m in b], "error": repr(exc)})
+            if i % 6 == 0 or i == len(batches):
+                print("TAIL_BATCH_FETCH_PROGRESS", i, "/", len(batches), "raw", len(raw), "fail", len(fetch_failures), flush=True)
+    if fetch_failures:
+        (out / "failures.json").write_text(json.dumps(fetch_failures, indent=2), encoding="utf-8")
+        raise RuntimeError(f"batched trade fetch failures: {len(fetch_failures)} batch(es)")
+
     by_condition = base.normalize_trades(raw)
     print("TAIL_BATCH_FETCH_DONE", "raw", len(raw), "conditions", len(by_condition), flush=True)
 
@@ -101,6 +124,8 @@ def score_range(start: str, end: str, out: Path, workers: int):
         "markets_with_tail_candidate": int(df["start"].nunique()) if len(df) else 0,
         "candidate_rows": int(len(df)),
         "raw_trade_rows": int(len(raw)),
+        "market_batch_size": MARKET_BATCH,
+        "fetch_workers": FETCH_WORKERS,
         "anchor_meta": anchor_meta,
         "entry_rule": "frozen V5 TAIL; I/O batched only: fair>=0.99 and exact-ticket post-fee edge>0 with same-second top-level size sufficient",
     }
