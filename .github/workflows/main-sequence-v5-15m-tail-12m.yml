@@ -18,7 +18,7 @@ jobs:
     timeout-minutes: 180
     strategy:
       fail-fast: false
-      max-parallel: 13
+      max-parallel: 6
       matrix:
         include:
           - { shard: aug15_2025, start: "2025-08-15", end: "2025-09-01" }
@@ -43,7 +43,7 @@ jobs:
       - name: Syntax gate
         run: python -m py_compile main_sequence/v5_15m_tail_only_fast.py main_sequence/v4_15m_l1_immediate.py main_sequence/final_v3_dual_bankroll_no_lookahead.py
       - name: Score frozen 15m TAIL month
-        run: python main_sequence/v5_15m_tail_only_fast.py --start '${{ matrix.start }}' --end '${{ matrix.end }}' --shard '${{ matrix.shard }}' --out 'tail15_${{ matrix.shard }}' --workers 6
+        run: python main_sequence/v5_15m_tail_only_fast.py --start '${{ matrix.start }}' --end '${{ matrix.end }}' --shard '${{ matrix.shard }}' --out 'tail15_${{ matrix.shard }}' --workers 3
       - uses: actions/upload-artifact@v4
         if: always()
         with:
