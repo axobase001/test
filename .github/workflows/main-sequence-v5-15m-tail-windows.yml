@@ -1,0 +1,49 @@
+name: main-sequence-v5-15m-tail-windows
+
+on:
+  push:
+    branches: [main-sequence-v5-symmetric-stop-1h-20260816]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PYTHONUNBUFFERED: "1"
+  PYTHONPATH: "."
+
+jobs:
+  score:
+    runs-on: windows-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        include:
+          - { shard: oct_2025, start: "2025-10-01", end: "2025-11-01" }
+          - { shard: dec_2025, start: "2025-12-01", end: "2026-01-01" }
+          - { shard: feb_2026, start: "2026-02-01", end: "2026-03-01" }
+          - { shard: apr_2026, start: "2026-04-01", end: "2026-05-01" }
+          - { shard: jun_2026, start: "2026-06-01", end: "2026-07-01" }
+          - { shard: aug_2026, start: "2026-08-01", end: "2026-08-15" }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: Install
+        run: python -m pip install 'honest-backtest[parquet]==0.2.0' requests scipy pandas pyarrow numpy
+      - name: Score active 15m TAIL month
+        run: python main_sequence/v5_15m_tail_only_fast.py --start '${{ matrix.start }}' --end '${{ matrix.end }}' --shard '${{ matrix.shard }}' --out 'tail15_${{ matrix.shard }}' --workers 3
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: main-sequence-v5-15m-tail-win-${{ matrix.shard }}
+          path: |
+            tail15_${{ matrix.shard }}/tail_tiered_records.csv
+            tail15_${{ matrix.shard }}/market_inventory.csv
+            tail15_${{ matrix.shard }}/summary.json
+            tail15_${{ matrix.shard }}/mapping_failures.csv
+            tail15_${{ matrix.shard }}/failures.json
+          if-no-files-found: warn
+          retention-days: 14
