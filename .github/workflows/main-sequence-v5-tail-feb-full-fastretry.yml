@@ -1,0 +1,42 @@
+name: main-sequence-v5-tail-feb-full-fastretry
+
+on:
+  push:
+    branches: [main-sequence-v5-symmetric-stop-1h-20260816]
+    paths:
+      - '.github/workflows/main-sequence-v5-tail-feb-full-fastretry.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PYTHONUNBUFFERED: "1"
+  PYTHONPATH: "."
+
+jobs:
+  feb-full:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: Install
+        run: python -m pip install 'honest-backtest[parquet]==0.2.0' requests scipy pandas pyarrow numpy
+      - name: Syntax gate
+        run: python -m py_compile main_sequence/v5_tail_only_retry.py main_sequence/v5_tail_only_fast.py main_sequence/v5_hourly_symmetric_stop.py main_sequence/v4_hourly_core_tail.py main_sequence/final_recent_replay.py pm_structural/recalc.py
+      - name: Full-Feb TAIL with one anchor snapshot and serial recovery
+        run: python main_sequence/v5_tail_only_retry.py score --start '2026-02-01' --end '2026-03-01' --out tail_feb_2026_full --workers 12
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: main-sequence-v5-tail-feb-2026-full-fastretry
+          path: |
+            tail_feb_2026_full/tail_candidates.csv
+            tail_feb_2026_full/inventory.csv
+            tail_feb_2026_full/summary.json
+            tail_feb_2026_full/retry_history.json
+            tail_feb_2026_full/retry_failures.json
+          if-no-files-found: warn
+          retention-days: 14
