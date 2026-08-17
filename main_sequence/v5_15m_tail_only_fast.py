@@ -12,14 +12,45 @@ import requests
 
 from main_sequence import v4_15m_l1_immediate as v4i
 
-# Frozen 15m policy inherited from V4/V3. This file changes I/O only:
-# fetch several markets' public trade tape in one request tree, then score locally.
+# Frozen 15m policy inherited from V4/V3. This file changes I/O only.
 engine = v4i.engine
 base = engine.base
 TAIL_FAIR_FLOOR = float(engine.TAIL_FAIR_FLOOR)   # 0.95
 CORE_NET_EDGE = float(engine.CORE_NET_EDGE)       # 0.03 upper bound for 15m TAIL
 STAKE_TIERS = tuple(float(x) for x in v4i.STAKE_TIERS)
 BATCH_MARKETS = 8
+TRADE_PAGE = 10_000  # current documented Data API maximum
+
+
+def query_trade_rows_10k(sess: requests.Session, markets, start: int, end: int) -> list[dict]:
+    """Complete public Data API retrieval using the current documented 10k page.
+
+    A full page is treated as potentially truncated and recursively split by market,
+    then time. A single-market/single-second overflow gets the only additional legal
+    offset page (10k); >20k rows in one market-second fails closed.
+    """
+    if not markets or end < start:
+        return []
+    q = {
+        "market": ",".join(m.condition_id for m in markets),
+        "start": int(start), "end": int(end), "limit": TRADE_PAGE,
+        "offset": 0, "takerOnly": "true",
+    }
+    rows = base.get_json(sess, base.DATA_API + "/trades", params=q, timeout=60)
+    if len(rows) < TRADE_PAGE:
+        return rows
+    if len(markets) > 1:
+        mid = len(markets) // 2
+        return query_trade_rows_10k(sess, markets[:mid], start, end) + query_trade_rows_10k(sess, markets[mid:], start, end)
+    if start < end:
+        mid_t = (start + end) // 2
+        return query_trade_rows_10k(sess, markets, start, mid_t) + query_trade_rows_10k(sess, markets, mid_t + 1, end)
+    q2 = dict(q); q2["offset"] = TRADE_PAGE
+    rr = base.get_json(sess, base.DATA_API + "/trades", params=q2, timeout=60)
+    out = list(rows) + list(rr)
+    if len(rr) < TRADE_PAGE:
+        return out
+    raise RuntimeError(f"Data API >20k trades in one market-second {markets[0].slug} {start}; refusing truncation")
 
 
 def tail_market_all_tiers(m, g: pd.DataFrame, spot, bn, der) -> list[dict]:
@@ -73,10 +104,10 @@ def fetch_batch(markets, spot, bn, der):
     if not markets:
         return [], 0
     sess = requests.Session()
-    sess.headers.update({"User-Agent": "main-sequence-v5-15m-tail-fast/1.0"})
+    sess.headers.update({"User-Agent": "main-sequence-v5-15m-tail-fast/2.0"})
     start = min(int(m.start) for m in markets) + 300
     end = max(int(m.close) for m in markets) - 1
-    raw = base.query_trade_rows(sess, list(markets), start, end)
+    raw = query_trade_rows_10k(sess, list(markets), start, end)
     tm = base.normalize_trades(raw)
     rows = []
     for m in markets:
@@ -84,17 +115,15 @@ def fetch_batch(markets, spot, bn, der):
     return rows, len(raw)
 
 
-def score_range(start: str, end: str, shard: str, out: Path, workers: int = 6):
+def score_range(start: str, end: str, shard: str, out: Path, workers: int = 3):
     out.mkdir(parents=True, exist_ok=True)
-    hours, by_hour, inventory = base.discover(start, end, workers=min(16, max(4, workers)))
+    hours, by_hour, inventory = base.discover(start, end, workers=min(12, max(4, workers * 2)))
     inventory.to_csv(out / "market_inventory.csv", index=False)
     theoretical = int(len(inventory))
     exists = inventory["exists_in_gamma"].fillna(False).astype(bool) if theoretical else pd.Series(dtype=bool)
     mapped_mask = inventory["mapped"].fillna(False).astype(bool) if theoretical else pd.Series(dtype=bool)
     tradable_expected = int(exists.sum()) if theoretical else 0
     mapped = int(mapped_mask.sum()) if theoretical else 0
-    # A quarter-hour with no Gamma contract is outside the tradable universe, not missing data.
-    # Fail closed only when Gamma says the contract existed but our parser/mapping lost it.
     bad_existing = inventory[exists & ~mapped_mask] if theoretical else inventory
     if len(bad_existing):
         bad_existing.to_csv(out / "mapping_failures.csv", index=False)
@@ -151,6 +180,7 @@ def score_range(start: str, end: str, shard: str, out: Path, workers: int = 6):
         "tail_records": int(len(df)),
         "tail_markets": int(df["start"].nunique()) if len(df) else 0,
         "raw_trade_rows": int(raw_rows),
+        "trade_page_limit": TRADE_PAGE,
         "anchor_meta": anchor_meta,
         "policy": {
             "fair_floor": TAIL_FAIR_FLOOR,
@@ -170,7 +200,7 @@ def main():
     ap.add_argument("--end", required=True)
     ap.add_argument("--shard", required=True)
     ap.add_argument("--out", type=Path, required=True)
-    ap.add_argument("--workers", type=int, default=6)
+    ap.add_argument("--workers", type=int, default=3)
     args = ap.parse_args()
     score_range(args.start, args.end, args.shard, args.out, args.workers)
 
