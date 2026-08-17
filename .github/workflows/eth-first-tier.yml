@@ -10,7 +10,7 @@ on:
 
 jobs:
   eth-5m-tail:
-    runs-on: ubuntu-latest
+    runs-on: macos-14
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
