@@ -1,0 +1,51 @@
+name: main-sequence-v5-tail-6m-windows
+
+on:
+  push:
+    branches: [main-sequence-v5-symmetric-stop-1h-20260816]
+    paths:
+      - '.github/workflows/main-sequence-v5-tail-6m-windows.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PYTHONUNBUFFERED: "1"
+  PYTHONPATH: "."
+
+jobs:
+  score:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        include:
+          - { shard: feb15_22, start: "2026-02-15", end: "2026-02-22" }
+          - { shard: feb22_mar01, start: "2026-02-22", end: "2026-03-01" }
+          - { shard: mar01_08, start: "2026-03-01", end: "2026-03-08" }
+          - { shard: mar08_16, start: "2026-03-08", end: "2026-03-16" }
+          - { shard: mar16_24, start: "2026-03-16", end: "2026-03-24" }
+          - { shard: mar24_apr01, start: "2026-03-24", end: "2026-04-01" }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: Install
+        run: python -m pip install 'honest-backtest[parquet]==0.2.0' requests scipy pandas pyarrow numpy
+      - name: Syntax gate
+        run: python -m py_compile main_sequence/v5_tail_only_fast.py main_sequence/v5_hourly_symmetric_stop.py main_sequence/v4_hourly_core_tail.py main_sequence/final_recent_replay.py pm_structural/recalc.py
+      - name: Score 6m bridge TAIL candidates
+        run: python main_sequence/v5_tail_only_fast.py score --start '${{ matrix.start }}' --end '${{ matrix.end }}' --out 'tail_${{ matrix.shard }}' --workers 12
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: main-sequence-v5-tail-6m-${{ matrix.shard }}
+          path: |
+            tail_${{ matrix.shard }}/tail_candidates.csv
+            tail_${{ matrix.shard }}/inventory.csv
+            tail_${{ matrix.shard }}/summary.json
+          if-no-files-found: warn
+          retention-days: 14
