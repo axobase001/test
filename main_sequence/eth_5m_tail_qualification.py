@@ -178,14 +178,14 @@ def main() -> None:
         "fee_rate": FEE_RATE,
         "markets_with_causal_decision": int(len(df)),
         "thresholds": {},
-        "barrier_filter": "directional d2 distance >= N^{-1}(fair_threshold); raw |log(S/K)|/(sigma*sqrt(tau)) also reported",
+        "barrier_filter": "independent raw standardized barrier distance |log(S/K)|/(sigma*sqrt(tau)) >= N^{-1}(fair_threshold); d2 also reported separately",
         "execution": "first/only 60s decision snapshot per market; require top ask notional depth >= $5 and positive fair-minus-ask-minus-fee; hold to Chainlink settlement",
     }
 
     for th in THRESHOLDS:
         z_floor = float(norm.ppf(th))
         fair_gate = df[df.fair >= th].copy()
-        barrier_gate = fair_gate[fair_gate.d2_abs >= z_floor].copy()
+        barrier_gate = fair_gate[fair_gate.raw_barrier_sigma >= z_floor].copy()
         depth_gate = barrier_gate[barrier_gate.depth_usd >= TICKET_USD - 1e-12].copy()
         trades = depth_gate[depth_gate.net_edge > 0].copy()
         trades.to_csv(args.out / f"eth_5m_tail_fair_{int(th*100)}.csv", index=False)
