@@ -1,0 +1,29 @@
+name: main-sequence-v5-state-mar-arm
+on:
+  push:
+    branches: [main-sequence-v5-symmetric-stop-1h-20260816]
+    paths: ['.github/workflows/main-sequence-v5-state-mar-arm.yml']
+  workflow_dispatch:
+permissions: {contents: read}
+env: {PYTHONUNBUFFERED: '1', PYTHONPATH: '.'}
+jobs:
+  score:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: python -m pip install 'honest-backtest[parquet]==0.2.0' requests scipy pandas pyarrow numpy
+      - run: python main_sequence/v5_hourly_state_batched.py --start 2026-03-01 --end 2026-04-01 --out state_mar_2026 --workers 4
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: main-sequence-v5-state-batched-mar_2026-arm
+          path: |
+            state_mar_2026/state_rows.csv
+            state_mar_2026/inventory.csv
+            state_mar_2026/summary.json
+            state_mar_2026/failures.json
+          if-no-files-found: warn
+          retention-days: 14
