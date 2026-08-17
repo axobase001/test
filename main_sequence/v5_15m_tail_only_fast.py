@@ -88,19 +88,24 @@ def score_range(start: str, end: str, shard: str, out: Path, workers: int = 6):
     out.mkdir(parents=True, exist_ok=True)
     hours, by_hour, inventory = base.discover(start, end, workers=min(16, max(4, workers)))
     inventory.to_csv(out / "market_inventory.csv", index=False)
-    expected = int(len(inventory))
-    mapped = int(inventory["mapped"].fillna(False).astype(bool).sum()) if expected else 0
-    if mapped != expected:
-        missing = inventory[~inventory["mapped"].fillna(False).astype(bool)] if expected else inventory
-        missing.to_csv(out / "mapping_failures.csv", index=False)
-        raise RuntimeError(f"15m TAIL fail-closed mapping coverage {mapped}/{expected}")
+    theoretical = int(len(inventory))
+    exists = inventory["exists_in_gamma"].fillna(False).astype(bool) if theoretical else pd.Series(dtype=bool)
+    mapped_mask = inventory["mapped"].fillna(False).astype(bool) if theoretical else pd.Series(dtype=bool)
+    tradable_expected = int(exists.sum()) if theoretical else 0
+    mapped = int(mapped_mask.sum()) if theoretical else 0
+    # A quarter-hour with no Gamma contract is outside the tradable universe, not missing data.
+    # Fail closed only when Gamma says the contract existed but our parser/mapping lost it.
+    bad_existing = inventory[exists & ~mapped_mask] if theoretical else inventory
+    if len(bad_existing):
+        bad_existing.to_csv(out / "mapping_failures.csv", index=False)
+        raise RuntimeError(f"15m TAIL fail-closed existing-market mapping {mapped}/{tradable_expected}; bad={len(bad_existing)}")
 
     markets = []
     for h in sorted(hours):
         markets.extend(sorted(by_hour.get(h, []), key=lambda m: int(m.start)))
     markets = sorted(markets, key=lambda m: int(m.start))
-    if len(markets) != expected:
-        raise RuntimeError(f"market object count mismatch {len(markets)} vs inventory {expected}")
+    if len(markets) != mapped:
+        raise RuntimeError(f"market object count mismatch {len(markets)} vs mapped {mapped}")
 
     bn, der, anchor_meta = base.build_anchors(start, end, out)
     spot = base.load_binance_1s(start, end, out / "binance_1s_cache")
@@ -138,9 +143,11 @@ def score_range(start: str, end: str, shard: str, out: Path, workers: int = 6):
     summary = {
         "shard": shard,
         "period": [start, end],
-        "markets_expected": expected,
+        "theoretical_quarter_hours": theoretical,
+        "gamma_contracts_existing": tradable_expected,
         "markets_mapped": mapped,
-        "mapping_coverage": mapped / expected if expected else math.nan,
+        "existing_market_mapping_coverage": mapped / tradable_expected if tradable_expected else math.nan,
+        "nonexistent_quarter_hours": theoretical - tradable_expected,
         "tail_records": int(len(df)),
         "tail_markets": int(df["start"].nunique()) if len(df) else 0,
         "raw_trade_rows": int(raw_rows),
