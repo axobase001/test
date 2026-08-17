@@ -1,0 +1,28 @@
+name: main-sequence-v6-btc5m-pilot
+on:
+  push:
+    branches: [main-sequence-v5-symmetric-stop-1h-20260816]
+    paths:
+      - '.github/workflows/main-sequence-v6-btc5m-pilot.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  pilot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - name: Install
+        run: python -m pip install 'honest-backtest[parquet]==0.2.0' requests scipy pandas pyarrow numpy
+      - name: Run BTC 5m pilot
+        run: PYTHONPATH=. python main_sequence/v6_5m_rv_core_pilot.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: btc5m-rv-core-pilot
+          path: btc5m_pilot/
+          if-no-files-found: warn
+          retention-days: 14
