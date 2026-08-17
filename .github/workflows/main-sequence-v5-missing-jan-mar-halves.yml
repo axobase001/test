@@ -1,8 +1,6 @@
 name: main-sequence-v5-missing-jan-mar-halves
 
 on:
-  push:
-    branches: [main-sequence-v5-symmetric-stop-1h-20260816]
   workflow_dispatch:
 
 permissions:
