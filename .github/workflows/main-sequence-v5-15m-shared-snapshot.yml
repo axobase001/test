@@ -1,0 +1,92 @@
+name: main-sequence-v5-15m-shared-snapshot
+
+on:
+  push:
+    branches: [main-sequence-v5-symmetric-stop-1h-20260816]
+    paths:
+      - '.github/workflows/main-sequence-v5-15m-shared-snapshot.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PYTHONUNBUFFERED: "1"
+  PYTHONPATH: "."
+
+jobs:
+  freeze:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: Install
+        run: python -m pip install 'honest-backtest[parquet]==0.2.0' requests scipy pandas pyarrow numpy
+      - name: Syntax gate
+        run: python -m py_compile main_sequence/v5_15m_tail_shared_snapshot.py main_sequence/v5_15m_tail_only_fast.py main_sequence/final_recent_no_lookahead.py
+      - name: Freeze one causal anchor world
+        run: python main_sequence/v5_15m_tail_shared_snapshot.py freeze --start '2025-10-01' --end '2026-08-15' --out shared_anchor
+      - uses: actions/upload-artifact@v4
+        with:
+          name: main-sequence-v5-15m-shared-anchor
+          path: |
+            shared_anchor/anchors.pkl
+            shared_anchor/snapshot_manifest.json
+          retention-days: 14
+
+  score:
+    needs: freeze
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        include:
+          - { shard: oct_a, start: "2025-10-01", end: "2025-10-16" }
+          - { shard: oct_b, start: "2025-10-16", end: "2025-11-01" }
+          - { shard: nov_a, start: "2025-11-01", end: "2025-11-16" }
+          - { shard: nov_b, start: "2025-11-16", end: "2025-12-01" }
+          - { shard: dec_a, start: "2025-12-01", end: "2025-12-16" }
+          - { shard: dec_b, start: "2025-12-16", end: "2026-01-01" }
+          - { shard: jan_a, start: "2026-01-01", end: "2026-01-16" }
+          - { shard: jan_b, start: "2026-01-16", end: "2026-02-01" }
+          - { shard: feb_a, start: "2026-02-01", end: "2026-02-15" }
+          - { shard: feb_b, start: "2026-02-15", end: "2026-03-01" }
+          - { shard: mar_a, start: "2026-03-01", end: "2026-03-16" }
+          - { shard: mar_b, start: "2026-03-16", end: "2026-04-01" }
+          - { shard: apr_a, start: "2026-04-01", end: "2026-04-16" }
+          - { shard: apr_b, start: "2026-04-16", end: "2026-05-01" }
+          - { shard: may_a, start: "2026-05-01", end: "2026-05-15" }
+          - { shard: may_b, start: "2026-05-15", end: "2026-06-01" }
+          - { shard: jun_a, start: "2026-06-01", end: "2026-06-16" }
+          - { shard: jun_b, start: "2026-06-16", end: "2026-07-01" }
+          - { shard: jul_a, start: "2026-07-01", end: "2026-07-16" }
+          - { shard: jul_b, start: "2026-07-16", end: "2026-08-01" }
+          - { shard: aug_a, start: "2026-08-01", end: "2026-08-15" }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: Install
+        run: python -m pip install 'honest-backtest[parquet]==0.2.0' requests scipy pandas pyarrow numpy
+      - uses: actions/download-artifact@v4
+        with:
+          name: main-sequence-v5-15m-shared-anchor
+          path: shared_anchor
+      - name: Score slice against frozen anchor world
+        run: python main_sequence/v5_15m_tail_shared_snapshot.py score --snapshot shared_anchor/anchors.pkl --start '${{ matrix.start }}' --end '${{ matrix.end }}' --shard '${{ matrix.shard }}' --out 'shared_${{ matrix.shard }}' --workers 3
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: main-sequence-v5-15m-shared-${{ matrix.shard }}
+          path: |
+            shared_${{ matrix.shard }}/tail_tiered_records.csv
+            shared_${{ matrix.shard }}/market_inventory.csv
+            shared_${{ matrix.shard }}/summary.json
+            shared_${{ matrix.shard }}/mapping_failures.csv
+            shared_${{ matrix.shard }}/failures.json
+          if-no-files-found: warn
+          retention-days: 14
