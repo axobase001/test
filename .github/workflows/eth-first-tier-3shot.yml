@@ -26,7 +26,7 @@ jobs:
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
       - name: Syntax gate
-        run: python -m py_compile main_sequence/eth15m_conservative_replay.py main_sequence/eth15m_conservative_replay_safe.py main_sequence/eth15m_conservative_replay_audited.py main_sequence/eth_causal_anchor.py main_sequence/eth5m_chainlink_tail.py main_sequence/eth1h_strict3_core.py main_sequence/eth1h_strict3_core_causal.py
+        run: python -m py_compile main_sequence/qualification_stats.py main_sequence/eth15m_conservative_replay.py main_sequence/eth15m_conservative_replay_safe.py main_sequence/eth15m_conservative_replay_audited.py main_sequence/eth_causal_anchor.py main_sequence/eth5m_chainlink_tail.py main_sequence/eth5m_chainlink_tail_audited.py main_sequence/eth1h_strict3_core.py main_sequence/eth1h_strict3_core_causal.py
 
   eth15m_core:
     needs: syntax
@@ -59,7 +59,7 @@ jobs:
       - name: Install
         run: python -m pip install duckdb scipy pandas pyarrow numpy huggingface_hub hf_xet
       - name: ETH 5m Chainlink settlement-only TAIL surface
-        run: python main_sequence/eth5m_chainlink_tail.py
+        run: python main_sequence/eth5m_chainlink_tail_audited.py
       - uses: actions/upload-artifact@v4
         if: always()
         with:
