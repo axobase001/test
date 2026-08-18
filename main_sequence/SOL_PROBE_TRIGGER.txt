@@ -1,1 +1,1 @@
-trigger 2026-08-18T11:31Z
+trigger sol-core qualification 2026-08-18T11:46Z
