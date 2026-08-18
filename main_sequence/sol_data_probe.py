@@ -1,94 +1,77 @@
 from __future__ import annotations
 
 import json
-import re
 from datetime import datetime, timezone
 
 import requests
 
 S = requests.Session()
-S.headers.update({"User-Agent": "main-sequence-sol-probe/1.1"})
+S.headers.update({"User-Agent": "main-sequence-sol-probe/1.2"})
+HOST = "https://api.manepa.jp"
 
 
-def get(url, **kwargs):
+def req(path, params=None):
     try:
-        r = S.get(url, timeout=30, **kwargs)
-        return {"status": r.status_code, "url": r.url, "text": r.text[:50000], "headers": dict(r.headers)}
+        r=S.get(HOST+path,params=params,timeout=30)
+        obj=None
+        try: obj=r.json()
+        except Exception: pass
+        return {"status":r.status_code,"url":r.url,"json":obj,"text":r.text[:2000]}
     except Exception as e:
-        return {"error": repr(e), "url": url}
-
-
-def js(url, params=None):
-    x = get(url, params=params)
-    try:
-        x["json"] = json.loads(x.get("text", ""))
-    except Exception:
-        pass
-    return x
+        return {"error":repr(e)}
 
 
 def main():
-    out = {"probe_version": 3}
+    out={"probe_version":4}
+    # Pull all Closed SOL option instruments, paginating if needed.
+    closed=[]; cursor=None; pages=[]
+    for page in range(20):
+        p={"category":"option","baseCoin":"SOL","status":"Closed","limit":1000}
+        if cursor: p["cursor"]=cursor
+        x=req("/v5/market/instruments-info",p); pages.append(x)
+        j=x.get("json") or {}; res=j.get("result") or {}; rows=res.get("list") or []
+        closed.extend(rows)
+        cursor=res.get("nextPageCursor") or ""
+        if not cursor or not rows: break
+    out["closed_pages"]=pages
+    out["closed_count"]=len(closed)
 
-    # Bybit global + regional API domains. SOL options are active on Bybit, but
-    # the global API can geo-block US hosted runners.
-    bybit_hosts = [
-        "https://api.bybit.com", "https://api.bytick.com", "https://api.bybit.nl",
-        "https://api.bybit.tr", "https://api.bybit.kz", "https://api.bybitgeorgia.ge",
-        "https://api.bybit.ae", "https://api.bybit.eu", "https://api.bybit.id",
-        "https://api.manepa.jp",
-    ]
-    out["bybit_hosts"] = {}
-    for host in bybit_hosts:
-        out["bybit_hosts"][host] = {
-            "instruments": js(host+"/v5/market/instruments-info", params={"category":"option","baseCoin":"SOL","limit":20}),
-            "trades": js(host+"/v5/market/recent-trade", params={"category":"option","baseCoin":"SOL","limit":20}),
-        }
+    lo=1778803200000; hi=1786752000000  # 2026-05-15 .. 2026-08-15 UTC
+    target=[z for z in closed if lo <= int(z.get("deliveryTime") or 0) <= hi]
+    out["target_closed_count"]=len(target)
+    out["target_instruments"]=target[:5000]
 
-    # OKX supports paginated public history-trades for the prior 3 months.
-    okx_hosts = ["https://www.okx.com", "https://app.okx.com", "https://my.okx.com", "https://tr.okx.com"]
-    out["okx"] = {}
-    for host in okx_hosts:
-        out["okx"][host] = {
-            "inst_family": js(host+"/api/v5/public/instruments", params={"instType":"OPTION","instFamily":"SOL-USD"}),
-            "uly": js(host+"/api/v5/public/instruments", params={"instType":"OPTION","uly":"SOL-USD"}),
-            "family_trades": js(host+"/api/v5/market/option/instrument-family-trades", params={"instFamily":"SOL-USD"}),
-            "option_trades": js(host+"/api/v5/public/option-trades", params={"instFamily":"SOL-USD"}),
-        }
+    # Sample across target expiries, prioritising strikes near rough midrange is unnecessary:
+    # this probe only tests whether expired symbols still expose public recent trades.
+    target_sorted=sorted(target,key=lambda z:(int(z.get("deliveryTime") or 0),z.get("symbol","")))
+    picks=[]
+    if target_sorted:
+        idxs=sorted(set([0,len(target_sorted)//4,len(target_sorted)//2,3*len(target_sorted)//4,len(target_sorted)-1]))
+        picks=[target_sorted[i] for i in idxs]
+    out["expired_trade_probes"]={}
+    for z in picks:
+        sym=z["symbol"]
+        out["expired_trade_probes"][sym]=req("/v5/market/recent-trade",{"category":"option","symbol":sym,"limit":1000})
 
-    # Polymarket SOL market mapping sanity checks across the target window.
-    gamma = "https://gamma-api.polymarket.com/markets"
-    starts = [1778803200, 1780272000, 1782864000, 1785542400]
-    out["pm15"] = {}
-    for t in starts:
-        slug = f"sol-updown-15m-{t}"
-        out["pm15"][slug] = js(gamma, params={"slug":slug,"closed":"true","limit":5})
+    # Also query a current symbol as positive control.
+    cur=req("/v5/market/instruments-info",{"category":"option","baseCoin":"SOL","limit":1})
+    out["current_instrument"]=cur
+    cj=cur.get("json") or {}; cl=(cj.get("result") or {}).get("list") or []
+    if cl:
+        sym=cl[0]["symbol"]
+        out["current_trade_control"]=req("/v5/market/recent-trade",{"category":"option","symbol":sym,"limit":1000})
 
-    out["pm1h"] = {}
-    for t in starts:
-        d = datetime.fromtimestamp(t, tz=timezone.utc)
-        for slug in [f"sol-updown-1h-{t}", f"solana-up-or-down-{d.strftime('%B').lower()}-{d.day}-{d.year}-{d.hour or 12}am-et"]:
-            out["pm1h"][slug] = js("https://gamma-api.polymarket.com/events", params={"slug":slug,"closed":"true","limit":5})
-
-    for host,x in out["bybit_hosts"].items():
-        ji=x["instruments"].get("json",{}); jt=x["trades"].get("json",{})
-        il=ji.get("result",{}).get("list",[]) if isinstance(ji,dict) else []
-        tl=jt.get("result",{}).get("list",[]) if isinstance(jt,dict) else []
-        print("BYBIT_HOST",host,"inst_status",x["instruments"].get("status"),"inst",len(il),"trade_status",x["trades"].get("status"),"trades",len(tl),flush=True)
-        if il: print("BYBIT_INST_SAMPLE",host,json.dumps(il[:1]),flush=True)
-        if tl: print("BYBIT_TRADE_SAMPLE",host,json.dumps(tl[:1]),flush=True)
-
-    for host,x in out["okx"].items():
-        for key in ["inst_family","uly","family_trades","option_trades"]:
-            jj=x[key].get("json",{}); data=jj.get("data",[]) if isinstance(jj,dict) else []
-            print("OKX",host,key,"status",x[key].get("status"),"code",jj.get("code") if isinstance(jj,dict) else None,"n",len(data),flush=True)
-            if data: print("OKX_SAMPLE",host,key,json.dumps(data[:2]),flush=True)
-
-    for slug,x in out["pm15"].items():
-        j=x.get("json",[]); print("SOL_PM15",slug,"count",len(j) if isinstance(j,list) else -1,flush=True)
-
+    print("CLOSED_SOL_OPTIONS",len(closed),"TARGET_MAY_AUG",len(target),flush=True)
+    if target:
+        dts=[int(z["deliveryTime"]) for z in target]
+        print("TARGET_DELIVERY_RANGE",min(dts),max(dts),flush=True)
+        print("TARGET_SAMPLE",json.dumps(target[:3]),flush=True)
+    for sym,x in out["expired_trade_probes"].items():
+        j=x.get("json") or {}; rows=(j.get("result") or {}).get("list") or []
+        print("EXPIRED_TRADE",sym,"http",x.get("status"),"ret",j.get("retCode"),"n",len(rows),flush=True)
+        if rows:
+            times=[int(r.get("time") or 0) for r in rows]
+            print("EXPIRED_TRADE_RANGE",sym,min(times),max(times),"sample",json.dumps(rows[:1]),flush=True)
     open("sol_probe.json","w",encoding="utf-8").write(json.dumps(out,indent=2))
 
-
-if __name__ == "__main__":
-    main()
+if __name__=="__main__": main()
