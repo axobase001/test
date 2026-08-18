@@ -30,6 +30,8 @@ This document freezes the final protocol before any valid execution result is ob
 - All 20 cells are reported; no post-hoc replacement of the surface by the best-looking cell.
 - Reference/threshold: Chainlink ETH; threshold is the Chainlink window-start price.
 - Fair: digital N(d2), using Chainlink spot/threshold and causal 60m realized volatility.
+- Chainlink causality uses raw `cap_prices.ts_ms` directly. No 5-second bucket start is allowed to stand in for a later tick; every fair-value spot must have `spot_source_ts <= chosen_book_ts`.
+- Realized-volatility minute points retain the actual last-tick timestamp, and a partial current minute can only contribute via the latest raw tick already observed by the chosen book timestamp.
 - Execution: actual captured `cap_book.best_ask` and best-level `ask_sz`; full fixed-$5 quantity must fit at that ask.
 - The chosen outcome is valued using its **own captured book timestamp**. No other outcome's later timestamp may advance fair value.
 - Target decision point: T-90s; chosen book snapshot must be no more than 4,000 ms stale versus target.
