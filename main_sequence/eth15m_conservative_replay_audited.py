@@ -4,7 +4,10 @@ import json
 import sys
 from pathlib import Path
 
+import pandas as pd
+
 from main_sequence import eth15m_conservative_replay_safe as safe
+from main_sequence.qualification_stats import daily_pnl_stats
 
 
 def requested_out() -> Path | None:
@@ -32,4 +35,8 @@ if __name__ == "__main__":
                 "net_edge_floor": 0.05,
                 "ask_floor": 0.20,
             }
+            trades_path = out / "trades.csv"
+            if trades_path.exists():
+                trades = pd.read_csv(trades_path)
+                data["qualification_stats"] = daily_pnl_stats(trades, "exit", "pnl", unit="s", seed_offset=15)
             p.write_text(json.dumps(data, indent=2))
