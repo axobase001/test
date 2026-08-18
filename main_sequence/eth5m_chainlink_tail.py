@@ -87,8 +87,6 @@ def digital_prob_up(rel_spot: float, seconds: float, sigma: float) -> float:
 
 @dataclass
 class PriceSeries:
-    # Raw Chainlink ticks. Every lookup is by the actual source/capture timestamp,
-    # never by a bucket label that could hide a future tick inside the bucket.
     ts: np.ndarray
     px: np.ndarray
     minute_ts: np.ndarray
@@ -101,10 +99,6 @@ class PriceSeries:
         return float(self.px[i]), int(self.ts[i])
 
     def rv(self, t_ms: int, minutes: int = 60, min_obs: int = 30) -> float:
-        # Precomputed minute points carry their *actual last-tick timestamp*.
-        # Therefore a minute whose last tick is in the future relative to t_ms
-        # is excluded automatically. Append the latest safe raw tick so the
-        # current partial minute can contribute without lookahead.
         hi = int(np.searchsorted(self.minute_ts, t_ms, side="right"))
         lo = int(np.searchsorted(self.minute_ts, t_ms - minutes * 60_000, side="left"))
         vals = self.minute_px[lo:hi].astype(float, copy=True)
@@ -163,12 +157,14 @@ def load_decision_books(paths: list[Path]) -> pd.DataFrame:
         AND end_ts*1000 >= {lo} AND end_ts*1000 < {hi}
         AND ts_ms <= end_ts*1000 - {target_offset}
         AND ts_ms >= end_ts*1000 - {target_offset + 7000}
-        AND best_ask > 0 AND best_ask < 1 AND ask_sz > 0
+        AND best_ask > 0 AND best_ask < 1
     ), ranked AS (
       SELECT *, row_number() OVER (PARTITION BY slug, outcome ORDER BY ts_ms DESC) AS rn
       FROM src
     )
-    SELECT * FROM ranked WHERE rn=1 ORDER BY end_ts, slug, outcome
+    SELECT * FROM ranked
+    WHERE rn=1 AND ask_sz IS NOT NULL AND ask_sz > 0
+    ORDER BY end_ts, slug, outcome
     """
     df = con.execute(q).fetchdf(); con.close()
     return df
@@ -276,7 +272,7 @@ def main():
             "fair_floors":list(FAIR_FLOORS),"barrier_bps_floors":list(BARRIER_BPS_FLOORS),
             "reference":"Chainlink ETH price stream; threshold is window-start Chainlink price",
             "fair":"digital N(d2) using each chosen outcome snapshot's own timestamp, raw-tick-causal Chainlink spot/threshold, and causal Chainlink 60m realized volatility",
-            "execution":"actual captured best ask + best-level ask size; full fixed-$5 qty required at that ask",
+            "execution":"latest captured book row at/before T-90 must itself contain best ask + best-level ask size; no borrowing depth from an older row after a newer price-only update; full fixed-$5 qty required at that ask",
             "capture_clock_note":"cap_book ts_ms is collector capture time (~2s cadence/token), not exchange event time",
             "chainlink_clock_note":"raw cap_prices Chainlink ts_ms is used directly; no 5s bucket label is allowed to stand in for a later tick",
             "fee":"0.07*p*(1-p)",
