@@ -1,6 +1,8 @@
 name: eth-first-tier-3shot
 
 on:
+  push:
+    branches: [eth-first-tier-3shot-20260818]
   pull_request:
     branches: [main-sequence-v5-symmetric-stop-1h-20260816]
   workflow_dispatch:
