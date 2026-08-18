@@ -49,7 +49,7 @@ jobs:
       - name: Syntax gate
         run: python -m py_compile main_sequence/qualification_stats.py main_sequence/eth5m_chainlink_tail.py main_sequence/eth5m_chainlink_tail_audited.py
       - name: Install
-        run: python -m pip install duckdb scipy pandas pyarrow numpy huggingface_hub hf_xet
+        run: python -m pip install requests duckdb scipy pandas pyarrow numpy huggingface_hub hf_xet
       - name: ETH 5m Chainlink settlement-only TAIL surface
         run: python main_sequence/eth5m_chainlink_tail_audited.py
       - uses: actions/upload-artifact@v4
