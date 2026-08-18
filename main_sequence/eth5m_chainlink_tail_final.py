@@ -1,17 +1,15 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import numpy as np
 
 from main_sequence import eth5m_chainlink_tail_qualified as qualified
 
 
 def load_chainlink_no_future_source(paths):
-    """Use only Chainlink rows whose oracle/source clock is not after capture clock.
-
-    The audited loader already requires a parsed payload timestamp and <=5s absolute
-    capture/source separation. Qualification additionally rejects source_ts>capture_ts
-    rather than treating collector clock skew as usable alpha.
-    """
+    """Use only Chainlink rows whose oracle/source clock is not after capture clock."""
     audited = qualified.audited
     ps = audited.load_chainlink_dual_clock(paths)
     keep = ps.capture_ts >= ps.source_ts
@@ -30,9 +28,25 @@ def load_chainlink_no_future_source(paths):
     )
 
 
+# Freeze one common bootstrap unit across all three lanes: market-start UTC day.
+_base_daily_pnl_stats = qualified.daily_pnl_stats
+
+
+def market_start_daily_pnl_stats(df, time_col, pnl_col, *, unit="s", seed_offset=0):
+    if df is not None and hasattr(df, "columns") and "win_start" in df.columns:
+        return _base_daily_pnl_stats(df, "win_start", pnl_col, unit="s", seed_offset=seed_offset)
+    return _base_daily_pnl_stats(df, time_col, pnl_col, unit=unit, seed_offset=seed_offset)
+
+
 qualified.audited.runner.load_chainlink = load_chainlink_no_future_source
+qualified.daily_pnl_stats = market_start_daily_pnl_stats
 
 
 if __name__ == "__main__":
     qualified.audited.runner.main()
     qualified.postprocess()
+    manifest_path = Path("eth5m_tail_out/manifest.json")
+    if manifest_path.exists():
+        manifest = json.loads(manifest_path.read_text())
+        manifest.setdefault("qualification_audit", {})["bootstrap_day_key"] = "market start UTC day"
+        manifest_path.write_text(json.dumps(manifest, indent=2))
