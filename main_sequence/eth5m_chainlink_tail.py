@@ -87,6 +87,8 @@ def digital_prob_up(rel_spot: float, seconds: float, sigma: float) -> float:
 
 @dataclass
 class PriceSeries:
+    # Raw Chainlink ticks. Every lookup is by the actual source/capture timestamp,
+    # never by a bucket label that could hide a future tick inside the bucket.
     ts: np.ndarray
     px: np.ndarray
     minute_ts: np.ndarray
@@ -99,9 +101,19 @@ class PriceSeries:
         return float(self.px[i]), int(self.ts[i])
 
     def rv(self, t_ms: int, minutes: int = 60, min_obs: int = 30) -> float:
+        # Precomputed minute points carry their *actual last-tick timestamp*.
+        # Therefore a minute whose last tick is in the future relative to t_ms
+        # is excluded automatically. Append the latest safe raw tick so the
+        # current partial minute can contribute without lookahead.
         hi = int(np.searchsorted(self.minute_ts, t_ms, side="right"))
         lo = int(np.searchsorted(self.minute_ts, t_ms - minutes * 60_000, side="left"))
-        vals = self.minute_px[lo:hi]
+        vals = self.minute_px[lo:hi].astype(float, copy=True)
+        mts = self.minute_ts[lo:hi]
+        cur_px, cur_ts = self.at(t_ms, tolerance_ms=20_000)
+        if cur_ts >= 0 and cur_px > 0:
+            cur_min = cur_ts // 60_000
+            if len(mts) == 0 or int(mts[-1]) // 60_000 != cur_min:
+                vals = np.append(vals, cur_px)
         vals = vals[np.isfinite(vals) & (vals > 0)]
         if vals.size < min_obs + 1:
             return float("nan")
@@ -116,25 +128,21 @@ def load_chainlink(paths: list[Path]) -> PriceSeries:
     lo = utc_ms(START) - 75 * 60_000
     hi = utc_ms(END) + 30_000
     q = f"""
-    WITH p AS (
       SELECT CAST(ts_ms AS BIGINT) AS ts_ms, CAST(value AS DOUBLE) AS value
       FROM read_parquet({sql_files(paths)}, union_by_name=true)
       WHERE upper(asset)='{ASSET}' AND lower(src)='chainlink'
         AND ts_ms >= {lo} AND ts_ms <= {hi} AND value > 0
-    ), b AS (
-      SELECT CAST(floor(ts_ms/5000)*5000 AS BIGINT) AS bar_ms,
-             arg_max(value, ts_ms) AS value, max(ts_ms) AS source_ts
-      FROM p GROUP BY bar_ms
-    )
-    SELECT * FROM b ORDER BY bar_ms
+      ORDER BY ts_ms
     """
     df = con.execute(q).fetchdf(); con.close()
     if len(df) < 100:
         raise RuntimeError(f"insufficient Chainlink ETH observations: {len(df)}")
-    ts = df.bar_ms.to_numpy(np.int64); px = df.value.to_numpy(float)
-    mins = (ts // 60_000) * 60_000
-    tmp = pd.DataFrame({"m": mins, "ts": ts, "px": px}).groupby("m", sort=True).tail(1)
-    return PriceSeries(ts, px, tmp.m.to_numpy(np.int64), tmp.px.to_numpy(float))
+    df = df.drop_duplicates("ts_ms", keep="last").sort_values("ts_ms", kind="mergesort")
+    ts = df.ts_ms.to_numpy(np.int64)
+    px = df.value.to_numpy(float)
+    minute_id = ts // 60_000
+    tmp = pd.DataFrame({"minute_id": minute_id, "ts": ts, "px": px}).groupby("minute_id", sort=True).tail(1)
+    return PriceSeries(ts, px, tmp.ts.to_numpy(np.int64), tmp.px.to_numpy(float))
 
 
 def load_decision_books(paths: list[Path]) -> pd.DataFrame:
@@ -188,7 +196,7 @@ def one_market_rows(book: pd.DataFrame, ps: PriceSeries) -> pd.DataFrame:
                 continue
             spot, spot_src = ps.at(decision_ts, 20_000)
             rv60 = ps.rv(decision_ts)
-            if not (spot > 0 and math.isfinite(rv60) and 0.02 < rv60 < 5.0):
+            if not (spot > 0 and spot_src <= decision_ts and math.isfinite(rv60) and 0.02 < rv60 < 5.0):
                 continue
             tau = max((end_ts * 1000 - decision_ts) / 1000.0, 1.0)
             p_up = digital_prob_up(spot / open_px, tau, rv60)
@@ -196,7 +204,6 @@ def one_market_rows(book: pd.DataFrame, ps: PriceSeries) -> pd.DataFrame:
                 continue
             side = "up" if outcome.startswith("up") else "down"
             fair = p_up if side == "up" else 1.0 - p_up
-            # Only the contemporaneous favorite can become a TAIL candidate.
             if fair < 0.5:
                 continue
             ask = float(rr.best_ask); ask_sz = float(rr.ask_sz)
@@ -216,9 +223,9 @@ def one_market_rows(book: pd.DataFrame, ps: PriceSeries) -> pd.DataFrame:
                 "close_chainlink": close_px, "settle_up": bool(settle_up), "won": bool(won),
                 "pnl_fixed5": (q if won else 0.0) - cost,
                 "open_source_ts": open_src, "spot_source_ts": spot_src, "close_source_ts": close_src,
+                "spot_source_lag_ms": int(decision_ts - spot_src),
             })
         if candidates:
-            # Ex-ante only: choose the strongest contemporaneous settlement edge; never use the label/PnL.
             rows.append(max(candidates, key=lambda x: (x["net_settlement_edge_ps"], x["fair"])))
     return pd.DataFrame(rows).sort_values("decision_ts_ms", kind="mergesort") if rows else pd.DataFrame()
 
@@ -244,6 +251,7 @@ def surface(raw: pd.DataFrame) -> pd.DataFrame:
                 "median_barrier_bps":float(z.barrier_bps.median()),
                 "median_sigma_distance":float(z.sigma_distance.median()),
                 "median_book_staleness_ms":float(z.book_staleness_ms.median()),
+                "median_spot_source_lag_ms":float(z.spot_source_lag_ms.median()),
                 "median_depth_headroom_x":float(z.depth_headroom_x.median()),
                 "fixed5_pnl":float(z.pnl_fixed5.sum()),"fixed5_final":float(50.0+z.pnl_fixed5.sum()),
                 "fixed5_mdd_pct":float(mdd*100.0),
@@ -267,9 +275,10 @@ def main():
             "settlement_only":True,"decision_s2c_target":DECISION_S2C,"max_book_staleness_ms":MAX_BOOK_STALENESS_MS,"ticket":TICKET,
             "fair_floors":list(FAIR_FLOORS),"barrier_bps_floors":list(BARRIER_BPS_FLOORS),
             "reference":"Chainlink ETH price stream; threshold is window-start Chainlink price",
-            "fair":"digital N(d2) using each chosen outcome snapshot's own timestamp, Chainlink spot/threshold, and causal Chainlink 60m realized volatility",
+            "fair":"digital N(d2) using each chosen outcome snapshot's own timestamp, raw-tick-causal Chainlink spot/threshold, and causal Chainlink 60m realized volatility",
             "execution":"actual captured best ask + best-level ask size; full fixed-$5 qty required at that ask",
             "capture_clock_note":"cap_book ts_ms is collector capture time (~2s cadence/token), not exchange event time",
+            "chainlink_clock_note":"raw cap_prices Chainlink ts_ms is used directly; no 5s bucket label is allowed to stand in for a later tick",
             "fee":"0.07*p*(1-p)",
             "barrier":"absolute Chainlink spot-to-threshold distance in bps; full predeclared sensitivity surface, no post-hoc threshold selection",
             "anti_lookahead":"each outcome ask is valued only with Chainlink/RV state timestamped at or before that same outcome's own captured book timestamp; final label is used only for settlement PnL",
