@@ -43,11 +43,12 @@ if __name__ == "__main__":
                 "ask_floor": 0.20,
                 "mapping_coverage": mapping_coverage,
                 "minimum_mapping_coverage_for_green": MIN_MAPPING_COVERAGE,
+                "bootstrap_day_key": "market start UTC day",
             }
             trades_path = out / "trades.csv"
             if trades_path.exists():
                 trades = pd.read_csv(trades_path)
-                stats = daily_pnl_stats(trades, "exit", "pnl", unit="s", seed_offset=15)
+                stats = daily_pnl_stats(trades, "start", "pnl", unit="s", seed_offset=15)
                 data["qualification_stats"] = stats
                 stat_grade = str(stats.get("grade"))
                 if stat_grade.startswith("RED"):
