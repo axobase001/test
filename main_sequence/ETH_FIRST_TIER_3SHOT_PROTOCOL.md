@@ -23,7 +23,9 @@ This document freezes the final protocol before any valid execution result is ob
 - Large dislocation exits through causal convergence to the 1c fair band; otherwise settlement fallback.
 
 ## ETH 5m TAIL
-- Period: 2026-06-04..2026-07-15 end-exclusive, matching the frozen capture envelope used for this qualification.
+- Requested period: 2026-06-04..2026-07-15 end-exclusive.
+- The artifact must separately report **requested period** and **observed source coverage**. Daily parquet filenames are rotation timestamps, not calendar partitions; qualification therefore includes the first rotation after END and lets row timestamps perform the final window cut.
+- Coverage is audited independently for ETH 5m `cap_book` and ETH Chainlink `cap_prices`, day by day in UTC. Statistical alpha may still be reported on observed trades, but an otherwise GREEN cell is demoted to `YELLOW_SOURCE_COVERAGE` if either required source is missing any requested UTC day.
 - Settlement only.
 - Fixed $5 ticket including taker fee `0.07 * p * (1-p)` per share.
 - Fair floors reported independently: 95%, 97%, 98%, 99%.
@@ -35,7 +37,7 @@ This document freezes the final protocol before any valid execution result is ob
 - Chainlink causality uses raw `cap_prices.ts_ms` directly. No 5-second bucket start is allowed to stand in for a later tick.
 - Threshold and decision Chainlink ticks must each be timestamped at or before their target clock and no more than 5,000 ms stale.
 - Realized-volatility minute points retain the actual last-tick timestamp, and a partial current minute can only contribute via the latest raw tick already observed by the chosen book timestamp.
-- Execution uses the **latest captured book row at/before T-90**. That latest row itself must contain `best_ask` and best-level `ask_sz`; depth may not be borrowed from an older snapshot after a newer price-only update.
+- Execution ranks all capture rows first and uses only the **latest captured book row at/before T-90**. That latest row itself must contain valid `best_ask` and `ask_sz`; neither price nor depth may be borrowed from an older snapshot after a newer empty/price-only row.
 - Full fixed-$5 quantity must fit at that latest ask.
 - The chosen outcome is valued using its **own captured book timestamp**. No other outcome's later timestamp may advance fair value.
 - Target decision point: T-90s; chosen book snapshot must be no more than 4,000 ms stale versus target.
