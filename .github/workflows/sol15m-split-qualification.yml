@@ -1,0 +1,56 @@
+name: sol15m-split-qualification
+
+on:
+  pull_request:
+    branches: [sol15m-split-base-20260818]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sol15m-split-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHONUNBUFFERED: "1"
+  PYTHONPATH: "."
+
+jobs:
+  segment:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - tag: mayjun
+            start: "2026-05-15"
+            end: "2026-06-15"
+          - tag: junjul
+            start: "2026-06-15"
+            end: "2026-07-15"
+          - tag: julaug
+            start: "2026-07-15"
+            end: "2026-08-15"
+    runs-on: windows-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: Syntax gate
+        run: python -m py_compile main_sequence/sol_core_common.py main_sequence/sol15m_core_audited.py
+      - name: Install
+        run: python -m pip install 'honest-backtest[parquet]==0.2.0' requests scipy pandas pyarrow numpy
+      - name: Run frozen SOL 15m segment
+        run: python main_sequence/sol15m_core_audited.py --start ${{ matrix.start }} --end ${{ matrix.end }} --out sol15m_${{ matrix.tag }} --workers 12
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sol15m-${{ matrix.tag }}
+          path: |
+            sol15m_${{ matrix.tag }}/summary.json
+            sol15m_${{ matrix.tag }}/trades.csv
+            sol15m_${{ matrix.tag }}/inventory.csv
+            sol15m_${{ matrix.tag }}/daily_density.csv
+          if-no-files-found: warn
+          retention-days: 7
