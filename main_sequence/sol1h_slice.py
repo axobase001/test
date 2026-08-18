@@ -4,7 +4,8 @@ import argparse
 
 from main_sequence import sol1h_core_audited as sol
 
-
+# This entrypoint changes only the evaluation window; the frozen strategy
+# parameters and SOL causal-anchor adapter are inherited unchanged.
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--start", required=True)
