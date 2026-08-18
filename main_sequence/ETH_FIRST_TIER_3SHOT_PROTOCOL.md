@@ -15,24 +15,28 @@ This document freezes the final protocol before any valid execution result is ob
 - Conservative raw gap >=10c.
 - Net fair-value edge >=5c/share.
 - Ask >=20c.
+- Official Polymarket resolution source is Chainlink ETH/USD. Realized PnL uses the actual Gamma-resolved market outcome.
+- The strategy fair is intentionally a **cross-source external anchor**, not a claim about the settlement oracle: Binance ETHUSDT relative price / 60m realized volatility plus backward 30m median Deribit ETH option-trade IV.
 - Entry and convergence-exit execution evidence: same-second public taker-tape exact-price volume; the chosen level alone must contain >=2x required qty.
 - This evidence is **not** represented as resting L1 order-book depth.
-- Fair: conservative boundary from Binance ETHUSDT 60m realized volatility and backward 30m median Deribit ETH option-trade IV.
 - Deribit candidate universe is selected only by creation/expiration timestamps; contemporaneous trade `index_price` supplies moneyness filtering. No spot-selected option universe.
 - Large dislocation exits through causal convergence to the 1c fair band; otherwise settlement fallback.
 
 ## ETH 5m TAIL
 - Period: 2026-06-04..2026-07-15 end-exclusive, matching the frozen capture envelope used for this qualification.
 - Settlement only.
-- Fixed $5 ticket including fee.
+- Fixed $5 ticket including taker fee `0.07 * p * (1-p)` per share.
 - Fair floors reported independently: 95%, 97%, 98%, 99%.
 - Barrier-distance floors reported independently: 0, 2, 5, 10, 20 bps.
 - All 20 cells are reported; no post-hoc replacement of the surface by the best-looking cell.
-- Reference/threshold: Chainlink ETH; threshold is the Chainlink window-start price.
+- Reference/threshold: Chainlink ETH; threshold is the window-start Chainlink price.
 - Fair: digital N(d2), using Chainlink spot/threshold and causal 60m realized volatility.
-- Chainlink causality uses raw `cap_prices.ts_ms` directly. No 5-second bucket start is allowed to stand in for a later tick; every fair-value spot must have `spot_source_ts <= chosen_book_ts`.
+- **Settlement winner comes only from the terminal closed Gamma market outcome.** Captured Chainlink close is diagnostic only and may never determine PnL. A market without a terminal 0/1 Gamma outcome is rejected.
+- Chainlink causality uses raw `cap_prices.ts_ms` directly. No 5-second bucket start is allowed to stand in for a later tick.
+- Threshold and decision Chainlink ticks must each be timestamped at or before their target clock and no more than 5,000 ms stale.
 - Realized-volatility minute points retain the actual last-tick timestamp, and a partial current minute can only contribute via the latest raw tick already observed by the chosen book timestamp.
-- Execution: actual captured `cap_book.best_ask` and best-level `ask_sz`; full fixed-$5 quantity must fit at that ask.
+- Execution uses the **latest captured book row at/before T-90**. That latest row itself must contain `best_ask` and best-level `ask_sz`; depth may not be borrowed from an older snapshot after a newer price-only update.
+- Full fixed-$5 quantity must fit at that latest ask.
 - The chosen outcome is valued using its **own captured book timestamp**. No other outcome's later timestamp may advance fair value.
 - Target decision point: T-90s; chosen book snapshot must be no more than 4,000 ms stale versus target.
 - `cap_book.ts_ms` is collector capture time (~2s cadence/token), not exchange event time; this limitation remains explicit.
@@ -40,7 +44,7 @@ This document freezes the final protocol before any valid execution result is ob
 ## ETH 1h CORE
 - Period: 2026-05-15..2026-08-15 end-exclusive.
 - Fixed $5 ticket.
-- Reference: Binance ETHUSDT 1H open/close.
+- Official market resolution and strategy reference both use Binance ETHUSDT 1H open/close.
 - Fair: conservative boundary from Binance ETHUSDT 60m realized volatility and backward 30m median Deribit ETH option-trade IV.
 - Deribit candidate universe uses the same no-lookahead temporal-universe rule as ETH15m.
 - Net convergence edge at entry >=5c/share.
