@@ -27,12 +27,7 @@ def load_chainlink_no_future_source(paths):
 
 
 def one_market_rows_common_t90(book: pd.DataFrame, ps, resolutions: dict[str, bool]) -> pd.DataFrame:
-    """One common T-90 information set per market.
-
-    Up/Down books may have different last snapshot timestamps, but side/fair/barrier
-    selection occurs only once, at the common T-90 clock. Historical opportunities
-    at different book timestamps are never compared ex post.
-    """
+    """One common T-90 information set per market."""
     runner = qualified.audited.runner
     rows = []
     for slug, g in book.groupby("slug", sort=False):
@@ -48,7 +43,6 @@ def one_market_rows_common_t90(book: pd.DataFrame, ps, resolutions: dict[str, bo
         decision_ms = end_target_ms - runner.DECISION_S2C * 1000
         settle_up = bool(resolutions[cond])
 
-        # All fair inputs are drawn from the information set available at T-90.
         open_px, open_src, open_cap = ps.at_source_time(
             open_target_ms, decision_ms, runner.MAX_CHAINLINK_LAG_MS
         )
@@ -75,8 +69,6 @@ def one_market_rows_common_t90(book: pd.DataFrame, ps, resolutions: dict[str, bo
 
         side_rows = g[g["outcome"].astype(str).str.lower().str.startswith(side)]
         if side_rows.empty:
-            # The latest snapshot for the actual T-90 favorite failed the
-            # price/depth validity gate; never substitute the opposite side.
             continue
         rr = side_rows.iloc[-1]
         book_ts = int(rr.ts_ms)
@@ -94,51 +86,30 @@ def one_market_rows_common_t90(book: pd.DataFrame, ps, resolutions: dict[str, bo
         )
         won = settle_up if side == "up" else not settle_up
 
-        # Close reconstruction is diagnostic only; Gamma terminal outcome owns PnL.
         close_px, close_src, close_cap = ps.at_source_time(
             end_target_ms, end_target_ms + 10_000, runner.MAX_CHAINLINK_LAG_MS
         )
         captured_chainlink_up = bool(close_px >= open_px) if close_px > 0 else None
-        mismatch = (
-            captured_chainlink_up != settle_up
-            if captured_chainlink_up is not None else None
-        )
+        mismatch = captured_chainlink_up != settle_up if captured_chainlink_up is not None else None
 
         rows.append({
-            "slug": slug,
-            "cond": cond,
-            "win_start": win_start,
-            "end_ts": end_ts,
-            "decision_ts_ms": decision_ms,
-            "decision_s2c_s": tau,
-            "book_capture_ts_ms": book_ts,
-            "book_staleness_ms": book_staleness_ms,
-            "side": side,
-            "fair": fair,
-            "p_up": float(p_up),
-            "ask": ask,
-            "ask_sz": ask_sz,
-            "qty_fixed5": qty,
-            "cost": cost,
+            "slug": slug, "cond": cond, "win_start": win_start, "end_ts": end_ts,
+            "decision_ts_ms": decision_ms, "decision_s2c_s": tau,
+            "book_capture_ts_ms": book_ts, "book_staleness_ms": book_staleness_ms,
+            "side": side, "fair": fair, "p_up": float(p_up),
+            "ask": ask, "ask_sz": ask_sz, "qty_fixed5": qty, "cost": cost,
             "depth_headroom_x": ask_sz / max(qty, 1e-12),
             "net_settlement_edge_ps": fair - ask - runner.fee_ps(ask),
-            "barrier_bps": barrier_bps,
-            "sigma_distance": sigma_distance,
-            "rv60": rv60,
-            "threshold_chainlink": open_px,
-            "spot_chainlink": spot,
+            "barrier_bps": barrier_bps, "sigma_distance": sigma_distance,
+            "rv60": rv60, "threshold_chainlink": open_px, "spot_chainlink": spot,
             "close_chainlink_diagnostic": close_px,
             "gamma_settle_up": settle_up,
             "captured_chainlink_reconstructed_up": captured_chainlink_up,
             "gamma_vs_captured_chainlink_mismatch": mismatch,
-            "won": bool(won),
-            "pnl_fixed5": (qty if won else 0.0) - cost,
-            "threshold_source_ts": open_src,
-            "threshold_capture_ts": open_cap,
-            "spot_source_ts": spot_src,
-            "spot_capture_ts": spot_cap,
-            "close_source_ts": close_src,
-            "close_capture_ts": close_cap,
+            "won": bool(won), "pnl_fixed5": (qty if won else 0.0) - cost,
+            "threshold_source_ts": open_src, "threshold_capture_ts": open_cap,
+            "spot_source_ts": spot_src, "spot_capture_ts": spot_cap,
+            "close_source_ts": close_src, "close_capture_ts": close_cap,
             "threshold_source_lag_ms": int(open_target_ms - open_src),
             "threshold_capture_minus_source_ms": int(open_cap - open_src),
             "threshold_known_before_decision_ms": int(decision_ms - open_cap),
@@ -148,13 +119,9 @@ def one_market_rows_common_t90(book: pd.DataFrame, ps, resolutions: dict[str, bo
             "common_decision_clock": "T-90",
         })
 
-    return (
-        pd.DataFrame(rows).sort_values("decision_ts_ms", kind="mergesort")
-        if rows else pd.DataFrame()
-    )
+    return pd.DataFrame(rows).sort_values("decision_ts_ms", kind="mergesort") if rows else pd.DataFrame()
 
 
-# Freeze one common bootstrap unit across all three lanes: market-start UTC day.
 _base_daily_pnl_stats = qualified.daily_pnl_stats
 
 
@@ -175,6 +142,11 @@ if __name__ == "__main__":
     manifest_path = Path("eth5m_tail_out/manifest.json")
     if manifest_path.exists():
         manifest = json.loads(manifest_path.read_text())
+        rules = manifest.setdefault("rules", {})
+        rules["fair"] = "digital N(d2) at one common T-90 decision clock using dual-clock-causal Chainlink threshold/spot and 60m realized volatility"
+        rules["execution"] = "at common T-90, choose the fair favorite once; use that outcome's latest valid captured best ask + best-level ask size at/before T-90, <=4s stale; full fixed-$5 qty required"
+        rules["chainlink_clock_note"] = "collector ts_ms gates information availability; nested RTDS payload timestamp defines oracle/source time; require source_ts <= capture_ts <= decision_ts and <=5s clock/freshness bounds"
+        rules["anti_lookahead"] = "single T-90 information set for fair/barrier/side; no cross-timestamp candidate comparison; Gamma terminal outcome is settlement-only; Gamma priceToBeat is post-close audit-only"
         qa = manifest.setdefault("qualification_audit", {})
         qa["bootstrap_day_key"] = "market start UTC day"
         qa["decision_clock"] = "single common T-90 clock for fair, barrier and favorite-side selection"
