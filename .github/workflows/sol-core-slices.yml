@@ -8,6 +8,10 @@ on:
 permissions:
   contents: read
 
+env:
+  PYTHONUNBUFFERED: "1"
+  PYTHONPATH: "."
+
 jobs:
   sol15m_slices:
     strategy:
