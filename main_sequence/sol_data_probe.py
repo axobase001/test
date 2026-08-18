@@ -28,7 +28,7 @@ def js(url, params=None):
 
 
 def main():
-    out = {}
+    out = {"probe_version": 2}
     out["bybit_instruments"] = js("https://api.bybit.com/v5/market/instruments-info", params={"category":"option","baseCoin":"SOL","limit":1000})
     out["bybit_recent_trades"] = js("https://api.bybit.com/v5/market/recent-trade", params={"category":"option","baseCoin":"SOL","limit":20})
     out["bybit_hv"] = js("https://api.bybit.com/v5/market/historical-volatility", params={"category":"option","baseCoin":"SOL","period":7})
@@ -55,23 +55,19 @@ def main():
         x["csv_found"] = sorted(set(re.findall(r'[^\"\'<> ]+\.csv(?:\.gz)?', text)))[:100]
         out["history_pages"][u] = x
 
-    # Polymarket SOL 15m slug spot-checks at several points in the target window.
     gamma = "https://gamma-api.polymarket.com/markets"
-    starts = [1778803200, 1780272000, 1782864000, 1785542400]  # 2026-05-15, Jun1, Jul1, Aug1 UTC
+    starts = [1778803200, 1780272000, 1782864000, 1785542400]
     out["pm15"] = {}
     for t in starts:
         slug = f"sol-updown-15m-{t}"
         out["pm15"][slug] = js(gamma, params={"slug":slug,"closed":"true","limit":5})
 
-    # Hourly candidate spot-checks.
     out["pm1h"] = {}
     for t in starts:
         d = datetime.fromtimestamp(t, tz=timezone.utc)
-        # NY local conversion intentionally avoided here; epoch form + broad text probes are enough for source audit.
         for slug in [f"sol-updown-1h-{t}", f"solana-up-or-down-{d.strftime('%B').lower()}-{d.day}-{d.year}-{d.hour or 12}am-et"]:
             out["pm1h"][slug] = js("https://gamma-api.polymarket.com/events", params={"slug":slug,"closed":"true","limit":5})
 
-    # Compact console summary.
     bi = out["bybit_instruments"].get("json", {})
     inst = bi.get("result", {}).get("list", []) if isinstance(bi, dict) else []
     bt = out["bybit_recent_trades"].get("json", {})
