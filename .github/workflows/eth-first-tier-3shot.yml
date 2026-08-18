@@ -1,0 +1,84 @@
+name: eth-first-tier-3shot
+
+on:
+  push:
+    branches: [eth-first-tier-3shot-20260818]
+  pull_request:
+    branches: [main-sequence-v5-symmetric-stop-1h-20260816]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: eth-first-tier-3shot-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHONUNBUFFERED: "1"
+  PYTHONPATH: "."
+  HF_HUB_DISABLE_PROGRESS_BARS: "1"
+
+jobs:
+  eth15m_core:
+    runs-on: windows-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: Syntax gate
+        run: python -m py_compile main_sequence/qualification_stats.py main_sequence/eth15m_conservative_replay.py main_sequence/eth15m_conservative_replay_safe.py main_sequence/eth15m_conservative_replay_audited.py main_sequence/eth_causal_anchor.py
+      - name: Install
+        run: python -m pip install 'honest-backtest[parquet]==0.2.0' requests scipy pandas pyarrow numpy
+      - name: ETH 15m CORE fixed5 raw10 gate5 tape2x causal-anchor
+        run: python main_sequence/eth15m_conservative_replay_audited.py --start 2026-05-15 --end 2026-08-15 --out eth15m_out --workers 8
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: eth-first-tier-15m-core
+          path: eth15m_out/
+          if-no-files-found: warn
+          retention-days: 7
+
+  eth5m_tail:
+    runs-on: macos-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: Syntax gate
+        run: python -m py_compile main_sequence/qualification_stats.py main_sequence/eth5m_chainlink_tail.py main_sequence/eth5m_chainlink_tail_audited.py main_sequence/eth5m_chainlink_tail_qualified.py main_sequence/eth5m_chainlink_tail_final.py
+      - name: Install
+        run: python -m pip install requests duckdb scipy pandas pyarrow numpy huggingface_hub hf_xet
+      - name: ETH 5m Chainlink settlement-only TAIL surface
+        run: python main_sequence/eth5m_chainlink_tail_final.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: eth-first-tier-5m-tail
+          path: eth5m_tail_out/
+          if-no-files-found: warn
+          retention-days: 7
+
+  eth1h_core:
+    runs-on: windows-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: Syntax gate
+        run: python -m py_compile main_sequence/qualification_stats.py main_sequence/eth15m_conservative_replay.py main_sequence/eth_causal_anchor.py main_sequence/eth1h_strict3_core.py main_sequence/eth1h_strict3_core_causal.py main_sequence/v4_hourly_core_tail.py
+      - name: Install
+        run: python -m pip install 'honest-backtest[parquet]==0.2.0' requests scipy pandas pyarrow numpy
+      - name: ETH 1h CORE fixed5 gate5 0.5G strict3 causal-anchor
+        run: python main_sequence/eth1h_strict3_core_causal.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: eth-first-tier-1h-core
+          path: eth1h_strict3_out/
+          if-no-files-found: warn
+          retention-days: 7

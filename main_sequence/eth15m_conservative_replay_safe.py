@@ -7,6 +7,7 @@ import requests
 
 from main_sequence import eth15m_conservative_replay as r
 from main_sequence import final_recent_replay as base
+from main_sequence.eth_causal_anchor import build_eth_anchors_causal
 
 
 def exact_level(qsec, action, outcome, market, need_mult=1.0, fixed_qty=None):
@@ -101,6 +102,7 @@ def score_hour(hour, markets, spot, bn, der):
     return rec,rv
 
 r.score_hour = score_hour
+r.build_anchors = build_eth_anchors_causal
 
 if __name__ == '__main__':
     r.main()
