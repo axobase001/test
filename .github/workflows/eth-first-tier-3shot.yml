@@ -47,11 +47,11 @@ jobs:
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
       - name: Syntax gate
-        run: python -m py_compile main_sequence/qualification_stats.py main_sequence/eth5m_chainlink_tail.py main_sequence/eth5m_chainlink_tail_audited.py main_sequence/eth5m_chainlink_tail_qualified.py
+        run: python -m py_compile main_sequence/qualification_stats.py main_sequence/eth5m_chainlink_tail.py main_sequence/eth5m_chainlink_tail_audited.py main_sequence/eth5m_chainlink_tail_qualified.py main_sequence/eth5m_chainlink_tail_final.py
       - name: Install
         run: python -m pip install requests duckdb scipy pandas pyarrow numpy huggingface_hub hf_xet
       - name: ETH 5m Chainlink settlement-only TAIL surface
-        run: python main_sequence/eth5m_chainlink_tail_qualified.py
+        run: python main_sequence/eth5m_chainlink_tail_final.py
       - uses: actions/upload-artifact@v4
         if: always()
         with:
