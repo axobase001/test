@@ -36,8 +36,6 @@ def score_market_strict_stop(m, spot, bn, der):
         fb = runner.fair_boundary(m, sec, spot, bn, der)
         exited = False
 
-        # Existing position: executable loss control is independent of whether
-        # a fresh RV/IV fair boundary can be formed on this exact second.
         if pos is not None:
             lv = runner.v4.top_level(qsec, "SELL", pos["outcome"])
             if lv is not None:
@@ -70,8 +68,6 @@ def score_market_strict_stop(m, spot, bn, der):
                         last_exit_sec = sec
                         exited = True
 
-        # A new fair-sensitive position can only be opened when current fair exists.
-        # strict3 also forbids re-entry in the exact second used to exit.
         if pos is None and not exited and sec > last_exit_sec and fb is not None:
             cands = []
             for outcome in ("up", "down"):
@@ -156,12 +152,13 @@ if __name__ == "__main__":
             "ask_floor": 0.20,
             "mapping_coverage": mapping_coverage,
             "minimum_mapping_coverage_for_green": MIN_MAPPING_COVERAGE,
+            "bootstrap_day_key": "market start UTC day",
         }
         events_path = Path("eth1h_strict3_out/events.csv")
         if events_path.exists():
             events = pd.read_csv(events_path)
             exits = events[events["event"].isin(["convergence", "stop_0.5G", "settlement"])].copy()
-            stats = daily_pnl_stats(exits, "time", "pnl", unit="s", seed_offset=60)
+            stats = daily_pnl_stats(exits, "start", "pnl", unit="s", seed_offset=60)
             data["qualification_stats"] = stats
             stat_grade = str(stats.get("grade"))
             if stat_grade.startswith("RED"):
