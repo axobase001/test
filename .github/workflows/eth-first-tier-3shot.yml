@@ -21,7 +21,7 @@ jobs:
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
       - name: Syntax gate
-        run: python -m py_compile main_sequence/eth15m_conservative_replay.py main_sequence/eth15m_conservative_replay_safe.py main_sequence/eth5m_chainlink_tail.py main_sequence/eth1h_strict3_core.py
+        run: python -m py_compile main_sequence/eth15m_conservative_replay.py main_sequence/eth15m_conservative_replay_safe.py main_sequence/eth_causal_anchor.py main_sequence/eth5m_chainlink_tail.py main_sequence/eth1h_strict3_core.py main_sequence/eth1h_strict3_core_causal.py
 
   eth15m_core:
     needs: syntax
@@ -33,7 +33,7 @@ jobs:
         with: { python-version: "3.12" }
       - name: Install
         run: python -m pip install 'honest-backtest[parquet]==0.2.0' requests scipy pandas pyarrow numpy
-      - name: ETH 15m CORE fixed5 raw10 gate5 depth2x
+      - name: ETH 15m CORE fixed5 raw10 gate5 depth2x causal-anchor
         run: python main_sequence/eth15m_conservative_replay_safe.py --start 2026-05-15 --end 2026-08-15 --out eth15m_out --workers 8
       - uses: actions/upload-artifact@v4
         if: always()
@@ -73,8 +73,8 @@ jobs:
         with: { python-version: "3.12" }
       - name: Install
         run: python -m pip install 'honest-backtest[parquet]==0.2.0' requests scipy pandas pyarrow numpy
-      - name: ETH 1h CORE fixed5 gate5 0.5G strict3
-        run: python main_sequence/eth1h_strict3_core.py
+      - name: ETH 1h CORE fixed5 gate5 0.5G strict3 causal-anchor
+        run: python main_sequence/eth1h_strict3_core_causal.py
       - uses: actions/upload-artifact@v4
         if: always()
         with:
