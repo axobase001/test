@@ -1,0 +1,58 @@
+name: eth15m-speed-sweep
+
+on:
+  push:
+    branches: [eth15m-speed-sweep-20260819]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PYTHONUNBUFFERED: "1"
+  PYTHONPATH: "."
+
+jobs:
+  probe:
+    runs-on: windows-latest
+    timeout-minutes: 100
+    strategy:
+      fail-fast: false
+      max-parallel: 12
+      matrix:
+        include:
+          - {name: b_may, raw: 0.10, edge: 0.05, start: '2026-05-15', end: '2026-06-05'}
+          - {name: b_jun, raw: 0.10, edge: 0.05, start: '2026-06-15', end: '2026-07-06'}
+          - {name: b_jul, raw: 0.10, edge: 0.05, start: '2026-07-15', end: '2026-08-05'}
+          - {name: m_may, raw: 0.08, edge: 0.04, start: '2026-05-15', end: '2026-06-05'}
+          - {name: m_jun, raw: 0.08, edge: 0.04, start: '2026-06-15', end: '2026-07-06'}
+          - {name: m_jul, raw: 0.08, edge: 0.04, start: '2026-07-15', end: '2026-08-05'}
+          - {name: f_may, raw: 0.06, edge: 0.03, start: '2026-05-15', end: '2026-06-05'}
+          - {name: f_jun, raw: 0.06, edge: 0.03, start: '2026-06-15', end: '2026-07-06'}
+          - {name: f_jul, raw: 0.06, edge: 0.03, start: '2026-07-15', end: '2026-08-05'}
+          - {name: l_may, raw: 0.05, edge: 0.025, start: '2026-05-15', end: '2026-06-05'}
+          - {name: l_jun, raw: 0.05, edge: 0.025, start: '2026-06-15', end: '2026-07-06'}
+          - {name: l_jul, raw: 0.05, edge: 0.025, start: '2026-07-15', end: '2026-08-05'}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - name: Install
+        run: python -m pip install 'honest-backtest[parquet]==0.2.0' requests scipy pandas pyarrow numpy
+      - name: Run probe
+        run: >-
+          python main_sequence/eth15m_speed_probe.py
+          --start ${{ matrix.start }} --end ${{ matrix.end }}
+          --out out_${{ matrix.name }}
+          --raw ${{ matrix.raw }} --edge ${{ matrix.edge }}
+          --ask 0.20 --volume 2.0 --workers 12
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: eth15m-speed-${{ matrix.name }}
+          path: |
+            out_${{ matrix.name }}/summary.json
+            out_${{ matrix.name }}/speed_summary.json
+            out_${{ matrix.name }}/trades.csv
+          if-no-files-found: warn
+          retention-days: 3
