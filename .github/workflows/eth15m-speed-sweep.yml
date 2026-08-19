@@ -1,8 +1,8 @@
 name: eth15m-speed-sweep
 
 on:
-  push:
-    branches: [eth15m-speed-sweep-20260819]
+  pull_request:
+    branches: [eth15m-speed-base-20260819]
   workflow_dispatch:
 
 permissions:
