@@ -14,7 +14,7 @@ env:
 
 jobs:
   probe:
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
     timeout-minutes: 100
     strategy:
       fail-fast: false
